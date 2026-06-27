@@ -8,6 +8,7 @@ class SrtSegment(BaseModel):
     end: float
     text: str
     translated: Optional[str] = None
+    speaker: Optional[str] = None
 
     @property
     def duration(self) -> float:
@@ -19,6 +20,7 @@ class PipelineJob(BaseModel):
     filename: str
     base_name: str
     vram_profile: str = "16gb"
+    target_language: str = "Tiếng Việt"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

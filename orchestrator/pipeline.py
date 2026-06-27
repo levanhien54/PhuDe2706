@@ -2,7 +2,7 @@ import os
 import asyncio
 import time
 
-from orchestrator.models import PipelineJob, StageResult
+from orchestrator.models import PipelineJob, StageResult, SrtSegment
 from orchestrator.config import Settings
 from orchestrator.vram_manager import VRAMManager
 from orchestrator.logger import get_logger, bind_job_context, clear_job_context
@@ -14,16 +14,14 @@ from orchestrator.audio_sync import mix_audio_to_video
 
 log = get_logger(__name__)
 
-
-async def run_pipeline(job: PipelineJob, settings: Settings) -> dict[str, StageResult]:
+async def run_pipeline_phase1(job: PipelineJob, settings: Settings) -> tuple[dict[str, StageResult], list[SrtSegment]]:
     bind_job_context(job.job_id, job.filename)
     vram = VRAMManager(settings)
     results: dict[str, StageResult] = {}
-    pipeline_start = time.monotonic()
+    
+    log.info("pipeline_phase1_start", vram_profile=settings.vram_profile, target_lang=job.target_language)
 
-    log.info("pipeline_start", vram_profile=settings.vram_profile, lipsync=settings.enable_lipsync)
-
-    # M2 + M7 run concurrently (audio_separate ~3GB + video_ocr ~2GB = ~5GB total)
+    # M2 + M7 run concurrently
     sep_task = asyncio.create_task(run_audio_separate(job, settings, vram))
     ocr_task = asyncio.create_task(run_video_ocr(job, settings, vram))
     sep_result, ocr_result = await asyncio.gather(sep_task, ocr_task)
@@ -34,7 +32,7 @@ async def run_pipeline(job: PipelineJob, settings: Settings) -> dict[str, StageR
     if not sep_result.success:
         log.error("pipeline_abort", reason="audio_separate failed")
         clear_job_context()
-        return results
+        return results, []
 
     # M3: WhisperX STT
     transcribe_result, segments = await run_transcribe(job, settings, vram)
@@ -43,7 +41,7 @@ async def run_pipeline(job: PipelineJob, settings: Settings) -> dict[str, StageR
     if not transcribe_result.success or not segments:
         log.error("pipeline_abort", reason="transcribe failed or empty")
         clear_job_context()
-        return results
+        return results, []
 
     # M4: LLM Translate
     translate_result, translated_segments = await run_translate(job, segments, settings, vram)
@@ -51,10 +49,21 @@ async def run_pipeline(job: PipelineJob, settings: Settings) -> dict[str, StageR
 
     if not translate_result.success:
         log.warning("translate_failed_using_original")
-        translated_segments = segments  # fallback: use original text
+        translated_segments = segments  # fallback
+        
+    clear_job_context()
+    return results, translated_segments
+
+
+async def run_pipeline_phase2(job: PipelineJob, segments: list[SrtSegment], settings: Settings) -> dict[str, StageResult]:
+    bind_job_context(job.job_id, job.filename)
+    vram = VRAMManager(settings)
+    results: dict[str, StageResult] = {}
+    
+    log.info("pipeline_phase2_start", vram_profile=settings.vram_profile, lipsync=settings.enable_lipsync)
 
     # M5: TTS Synthesize
-    synth_result = await run_synthesize(job, translated_segments, settings, vram)
+    synth_result = await run_synthesize(job, segments, settings, vram)
     results["synthesize"] = synth_result
 
     if not synth_result.success:
@@ -92,7 +101,6 @@ async def run_pipeline(job: PipelineJob, settings: Settings) -> dict[str, StageR
         duration_seconds=time.monotonic() - mux_start,
     )
 
-    total_time = time.monotonic() - pipeline_start
-    log.info("pipeline_done", output=output_path, total_seconds=round(total_time, 1))
+    log.info("pipeline_phase2_done", output=output_path)
     clear_job_context()
     return results

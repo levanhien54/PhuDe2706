@@ -49,7 +49,7 @@ def mix_audio_to_video(video_path: str, new_vocal_path: str, background_path: st
         "-i", video_path,
         "-i", new_vocal_path,
         "-i", background_path,
-        "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest[a]",
+        "-filter_complex", "[2:a]aformat=channel_layouts=stereo[bg];[1:a]aformat=channel_layouts=stereo[voc];[bg][voc]sidechaincompress=threshold=0.05:ratio=4:attack=5:release=50[bg_ducked];[voc][bg_ducked]amix=inputs=2:duration=longest[a]",
         "-map", "0:v",
         "-map", "[a]",
         "-c:v", "copy",

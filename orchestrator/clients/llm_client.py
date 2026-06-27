@@ -72,7 +72,7 @@ class LLMClient(BaseClient):
                 result = await self.post_json("/api/generate", payload)
                 return result.get("response", "").strip()
 
-    async def _translate_batch_chunk(self, chunk: list[SrtSegment], start_id: int, target_lang: str) -> list[str]:
+    async def _translate_batch_chunk(self, chunk: list[SrtSegment], target_lang: str) -> list[str]:
         # Use 0-based IDs within chunk to avoid LLM reindexing issues
         input_data = [
             {"id": i, "text": s.text}
@@ -120,9 +120,13 @@ class LLMClient(BaseClient):
 
         except Exception as e:
             log.warning("batch_translation_failed_fallback", error=str(e), chunk_size=len(chunk))
-            # Fallback to per-sentence translation
+            await asyncio.sleep(1.0)  # brief backoff before retrying individually
             tasks = [self._translate_one(s.text, target_lang) for s in chunk]
-            return await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            return [
+                r if isinstance(r, str) else chunk[i].text
+                for i, r in enumerate(results)
+            ]
 
     async def translate_batch(
         self, segments: list[SrtSegment], target_lang: str = "Tiếng Việt"
@@ -134,13 +138,13 @@ class LLMClient(BaseClient):
         # Limit concurrent batch requests with semaphore
         batch_sem = asyncio.Semaphore(3)
 
-        async def _run_chunk(chunk, start_id):
+        async def _run_chunk(chunk):
             async with batch_sem:
-                return await self._translate_batch_chunk(chunk, start_id, target_lang)
+                return await self._translate_batch_chunk(chunk, target_lang)
 
         chunk_results = await asyncio.gather(*[
-            _run_chunk(chunk, i * chunk_size)
-            for i, chunk in enumerate(chunks)
+            _run_chunk(chunk)
+            for chunk in chunks
         ])
 
         translations = [t for chunk_trans in chunk_results for t in chunk_trans]

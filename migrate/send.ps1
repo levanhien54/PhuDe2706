@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Gửi toàn bộ dự án (kể cả models/) sang server qua croc — P2P, xuyên NAT, đa luồng, có resume.
 

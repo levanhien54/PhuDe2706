@@ -8,6 +8,18 @@
 
 ---
 
+## 0. Cách dễ nhất: giao diện click (khuyến nghị)
+
+Double-click **`migrate\Migrate.bat`** để mở giao diện:
+- Tự kiểm tra croc, có nút **Cài croc** (qua winget) nếu thiếu.
+- Khung **GỬI** (máy nguồn): tick "Dọn" → bấm **Bắt đầu gửi** → code phrase hiện to và tự copy vào clipboard.
+- Khung **NHẬN** (server): dán code phrase, chọn thư mục lưu → bấm **Bắt đầu nhận**.
+- Khung log đen hiển thị tiến độ trực tiếp.
+
+Phần còn lại của tài liệu là cách làm bằng dòng lệnh (nếu thích).
+
+---
+
 ## 1. Cài croc (cả MÁY NGUỒN lẫn SERVER)
 
 ```powershell

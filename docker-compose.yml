@@ -87,6 +87,7 @@ services:
       - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
       - WHISPER_LANGUAGE=${WHISPER_LANGUAGE:-}
       - HF_TOKEN=${HF_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -119,6 +120,7 @@ services:
     environment:
       - GPT_SOVITS_PROMPT_TEXT=${GPT_SOVITS_PROMPT_TEXT:-}
       - GPT_SOVITS_PROMPT_LANG=${GPT_SOVITS_PROMPT_LANG:-auto}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9880/health"]
       interval: 30s

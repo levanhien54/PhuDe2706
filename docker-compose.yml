@@ -14,8 +14,12 @@ services:
     build:
       context: ./orchestrator
     container_name: ai_dubbing_orchestrator
+    command: uvicorn orchestrator.api:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./orchestrator:/app/orchestrator
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - WHISPERX_API=http://whisperx:8000
@@ -77,6 +81,7 @@ services:
     container_name: ai_dubbing_demucs
     volumes:
       - ./data/temp:/data
+      - ./models/demucs:/root/.cache/torch/hub
     entrypoint: ["tail", "-f", "/dev/null"]
     <<: *gpu-resources
 

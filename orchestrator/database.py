@@ -97,6 +97,44 @@ def get_job_by_filename(filename: str) -> Dict[str, Any]:
         return res
     return None
 
+def get_jobs_by_filenames(filenames: list) -> dict:
+    """Returns {filename: job_dict} for all matching filenames."""
+    if not filenames:
+        return {}
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    placeholders = ",".join("?" * len(filenames))
+    cursor.execute(
+        f"SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY filename ORDER BY created_at DESC) rn FROM jobs WHERE filename IN ({placeholders})) WHERE rn=1",
+        filenames
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    result = {}
+    for row in rows:
+        d = dict(row)
+        d['results'] = json.loads(d['results']) if d['results'] else {}
+        d.pop('rn', None)
+        result[d['filename']] = d
+    return result
+
+def fail_stale_jobs(timeout_hours: int = 2) -> list:
+    """Mark jobs stuck in PROCESSING/PROCESSING_PHASE2 for > timeout_hours as FAILED."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cutoff = datetime.utcnow().isoformat()
+    cursor.execute(
+        """UPDATE jobs SET status='FAILED', error='Job timed out', updated_at=?
+           WHERE status IN ('PROCESSING','PROCESSING_PHASE2')
+           AND updated_at < datetime(?, '-' || ? || ' hours')""",
+        (cutoff, cutoff, str(timeout_hours))
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
 def save_segments(job_id: str, segments: List[Any]):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()

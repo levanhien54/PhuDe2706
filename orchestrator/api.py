@@ -2,6 +2,7 @@ import os
 import uuid
 import asyncio
 import shutil
+from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,12 +16,21 @@ from orchestrator.models import PipelineJob, SrtSegment
 from orchestrator.pipeline import run_pipeline_phase1, run_pipeline_phase2
 from orchestrator.database import (
     save_job, update_job_status, get_job, get_job_by_filename,
-    save_segments, get_segments, update_segment_translation
+    save_segments, get_segments, update_segment_translation,
+    get_jobs_by_filenames, fail_stale_jobs
 )
 
 log = get_logger(__name__)
 
-app = FastAPI(title="Video Dubbing API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # On startup: recover stale jobs from previous crash
+    recovered = fail_stale_jobs(timeout_hours=2)
+    if recovered:
+        log.info("startup_recovered_stale_jobs", count=recovered)
+    yield
+
+app = FastAPI(title="Video Dubbing API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,21 +54,22 @@ class SegmentUpdate(BaseModel):
     id: int
     translated_text: str
 
+ALLOWED_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
+
 @app.get("/api/videos")
 async def list_videos():
     videos = [f for f in os.listdir(input_dir) if f.endswith(".mp4")]
+    jobs_map = get_jobs_by_filenames(videos)  # single query
     result = []
     for v in videos:
         base_name = os.path.splitext(v)[0]
         output_file = os.path.join(output_dir, f"{base_name}_dubbed.mp4")
-        
-        job_info = get_job_by_filename(v)
+        job_info = jobs_map.get(v)
         status = "PENDING"
         if job_info:
             status = job_info["status"]
         elif os.path.exists(output_file):
             status = "COMPLETED"
-            
         result.append({
             "filename": v,
             "status": status,
@@ -74,11 +85,26 @@ def _cleanup_temp(base_name: str, data_dir: str):
 
 @app.post("/api/upload")
 async def upload_video(file: UploadFile = File(...)):
-    MAX_SIZE = 500 * 1024 * 1024  # 500MB
+    MAX_SIZE = 500 * 1024 * 1024
     contents = await file.read()
     if len(contents) > MAX_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 500MB.")
+
     safe_name = os.path.basename(file.filename)
+    ext = os.path.splitext(safe_name)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
+
+    # Check video magic bytes (MP4: ftyp at offset 4, MKV: EBML header 1A45DFA3, AVI: RIFF)
+    if len(contents) >= 12:
+        is_mp4 = contents[4:8] == b'ftyp'
+        is_mkv = contents[:4] == b'\x1a\x45\xdf\xa3'
+        is_avi = contents[:4] == b'RIFF' and contents[8:12] == b'AVI '
+        is_mov = contents[4:8] in (b'ftyp', b'moov', b'mdat', b'wide', b'free')
+        is_webm = contents[:4] == b'\x1a\x45\xdf\xa3'
+        if not (is_mp4 or is_mkv or is_avi or is_mov or is_webm):
+            raise HTTPException(status_code=415, detail="File content does not appear to be a valid video.")
+
     file_path = os.path.join(input_dir, safe_name)
     with open(file_path, "wb") as f:
         f.write(contents)

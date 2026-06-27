@@ -85,8 +85,8 @@ async def run_synthesize(
                         language=job.target_language,
                     )
                     stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
-                    stretch_audio(seg_output, stretched_path, seg.duration)
-                    seg_data, _ = sf.read(stretched_path)
+                    await asyncio.to_thread(stretch_audio, seg_output, stretched_path, seg.duration)
+                    seg_data, _ = await asyncio.to_thread(sf.read, stretched_path)
                     return (i, seg, seg_data)
 
             tasks = [_synth_seg(i, seg) for i, seg in enumerate(segments)]
@@ -100,6 +100,10 @@ async def run_synthesize(
                 if end_sample > len(combined_audio):
                     combined_audio = np.pad(combined_audio, (0, end_sample - len(combined_audio)))
                 combined_audio[start_sample:end_sample] += seg_data
+
+        if combined_audio.size == 0:
+            log.error("synthesize_no_audio", reason="all segments skipped or failed")
+            return StageResult(stage="synthesize", success=False, error="No audio synthesized (all segments empty)")
 
         peak = np.max(np.abs(combined_audio))
         if peak > 1.0:

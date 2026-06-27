@@ -93,7 +93,7 @@ async def run_pipeline_phase2(job: PipelineJob, segments: list[SrtSegment], sett
     bg_audio = os.path.join(temp_dir, "bg.wav")
 
     mux_start = time.monotonic()
-    mix_audio_to_video(video_source, new_vocal, bg_audio, output_path)
+    await asyncio.to_thread(mix_audio_to_video, video_source, new_vocal, bg_audio, output_path)
     results["mux"] = StageResult(
         stage="mux",
         success=os.path.exists(output_path),

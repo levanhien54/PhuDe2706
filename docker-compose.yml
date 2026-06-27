@@ -1,30 +1,43 @@
 version: '3.8'
 
+x-gpu-resources: &gpu-resources
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
 services:
   orchestrator:
-    build: 
+    build:
       context: ./orchestrator
     container_name: ai_dubbing_orchestrator
     volumes:
       - ./data:/app/data
-      - ./orchestrator:/app/src
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - WHISPERX_API=http://whisperx:8000
       - DEMUCS_API=http://demucs:8000
-      - TTS_API=http://tts:8000
+      - TTS_API=http://tts:9880
       - OMNIVOICE_API=http://omnivoice:3900
-      - TTS_ENGINE=omnivoice
+      - LIPSYNC_API=http://lipsync:8010
+      - TTS_ENGINE=${TTS_ENGINE:-omnivoice}
+      - LLM_BACKEND=${LLM_BACKEND:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:14b}
+      - VRAM_PROFILE=${VRAM_PROFILE:-16gb}
+      - ENABLE_LIPSYNC=${ENABLE_LIPSYNC:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      - ollama
-    # Orchestrator không nhất thiết cần GPU, nhưng nếu dùng FFmpeg NVENC thì có thể cấp
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      ollama:
+        condition: service_healthy
+      whisperx:
+        condition: service_healthy
+      demucs:
+        condition: service_started
+    <<: *gpu-resources
+    restart: on-failure:3
 
   ollama:
     image: ollama/ollama:latest
@@ -33,66 +46,55 @@ services:
       - "11434:11434"
     volumes:
       - ./models/ollama:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # Keep alive context
     environment:
       - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    <<: *gpu-resources
 
-  # Lưu ý: Các service dưới đây sử dụng image giả định/phổ biến từ cộng đồng. 
-  # Trong môi trường thực tế, bạn sẽ cần clone các repo mã nguồn mở tương ứng và build image.
   whisperx:
-    image: ahmetkca/whisperx-api:latest # Hoặc repo tự build
+    image: ahmetkca/whisperx-api:latest
     container_name: ai_dubbing_whisperx
     ports:
       - "8001:8000"
     volumes:
       - ./models/whisper:/root/.cache/whisper
       - ./data/temp:/app/temp
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    <<: *gpu-resources
 
   demucs:
-    image: xserrat/facebook-demucs:latest # Chạy qua CLI hoặc custom FastAPI wrapper
+    image: xserrat/facebook-demucs:latest
     container_name: ai_dubbing_demucs
     volumes:
       - ./data/temp:/data
-    # Demucs service có thể được gọi bằng 'docker exec' từ orchestrator thay vì API nếu không có sẵn HTTP wrapper
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # command: tail -f /dev/null # Keep alive để orchestrator exec vào
     entrypoint: ["tail", "-f", "/dev/null"]
+    <<: *gpu-resources
 
   tts:
-    image: mikan/gpt-sovits-api:latest # Giả định image cho GPT-SoVITS API
+    image: mikan/gpt-sovits-api:latest
     container_name: ai_dubbing_tts
     ports:
       - "9880:9880"
     volumes:
       - ./models/tts:/app/models
       - ./data/temp:/app/temp
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9880/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    <<: *gpu-resources
 
   omnivoice:
     image: ghcr.io/debpalash/omnivoice-studio:latest
@@ -102,10 +104,31 @@ services:
     volumes:
       - ./models/omnivoice:/root/.local/share/omnivoice
       - ./data/temp:/app/temp
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3900/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    <<: *gpu-resources
+
+  # M9 Lip-sync: LatentSync
+  # Image needs to be built from: https://github.com/bytedance/LatentSync
+  # Build: docker build -t lipsync-api:latest ./lipsync-service/
+  lipsync:
+    image: lipsync-api:latest
+    container_name: ai_dubbing_lipsync
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./models/lipsync:/app/models
+      - ./data/temp:/app/temp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    profiles:
+      - lipsync
+    <<: *gpu-resources

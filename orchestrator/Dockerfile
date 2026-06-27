@@ -1,17 +1,25 @@
 FROM python:3.11-slim
 
-# Install system dependencies (ffmpeg and build tools for audio processing)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    libsndfile1 \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     rubberband-cli \
-    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app/src
+WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Keep alive or run the orchestrator process
-CMD ["python", "main.py"]
+COPY . .
+
+# Health check: verify orchestrator can import config
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD python -c "from orchestrator.config import get_settings; get_settings()" || exit 1
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+CMD ["python", "-m", "orchestrator.main"]

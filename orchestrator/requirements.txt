@@ -5,7 +5,8 @@ soundfile==0.12.1
 pyrubberband==0.3.0
 pydantic==2.8.2
 python-dotenv==1.0.1
-paddlepaddle-gpu>=2.6.0
+# paddlepaddle-gpu is installed in the Dockerfile from Paddle's cu118 index
+# (not PyPI), so it is intentionally NOT listed here.
 paddleocr>=2.7.0.3
 opencv-python>=4.8.0
 pydantic-settings==2.3.4

@@ -7,7 +7,7 @@ from datetime import datetime
 from orchestrator.config import get_settings
 from orchestrator.logger import setup_logging, get_logger
 from orchestrator.models import PipelineJob
-from orchestrator.pipeline import run_pipeline
+from orchestrator.pipeline import run_pipeline_phase1, run_pipeline_phase2
 
 log = get_logger(__name__)
 
@@ -17,6 +17,10 @@ def parse_args():
     parser.add_argument(
         "--video", type=str, default=None,
         help="Tên file video cụ thể trong data/input/ (bỏ trống để xử lý tất cả)",
+    )
+    parser.add_argument(
+        "--lang", type=str, default="Tiếng Việt",
+        help="Ngôn ngữ đích cho bản dịch (mặc định: Tiếng Việt)",
     )
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     return parser.parse_args()
@@ -50,10 +54,19 @@ async def main():
             job_id=str(uuid.uuid4())[:8],
             filename=filename,
             base_name=base_name,
+            target_language=args.lang,
             vram_profile=settings.vram_profile,
             created_at=datetime.utcnow(),
         )
-        results = await run_pipeline(job, settings)
+
+        # Headless full run: phase1 (separate/OCR/STT/translate) then phase2
+        # (TTS/lipsync/mux) back-to-back, skipping the human-review pause.
+        results, segments = await run_pipeline_phase1(job, settings)
+        if segments:
+            phase2_results = await run_pipeline_phase2(job, segments, settings)
+            results.update(phase2_results)
+        else:
+            log.warning("phase1_no_segments_skipping_phase2", filename=filename)
 
         print(f"\n=== Kết quả cho {filename} ===")
         for stage, result in results.items():

@@ -26,9 +26,35 @@ async def run_synthesize(
     final_output = os.path.join(temp_dir, "new_vocal.wav")
 
     try:
-        ref_data, sr = sf.read(vocal_path)
+        with sf.SoundFile(vocal_path) as f:
+            sr = f.samplerate
+            total_frames = f.frames
+            has_audio = True
     except Exception:
         sr = 22050
+        total_frames = 0
+        has_audio = False
+
+    # Build per-speaker reference clips from the longest segment per speaker
+    speaker_refs: dict[str, SrtSegment] = {}
+    for seg in segments:
+        if seg.speaker:
+            if seg.speaker not in speaker_refs or seg.duration > speaker_refs[seg.speaker].duration:
+                speaker_refs[seg.speaker] = seg
+
+    speaker_ref_paths: dict[str, str] = {}
+    if has_audio:
+        for spk, seg in speaker_refs.items():
+            spk_ref_path = os.path.join(temp_dir, f"{spk}_ref.wav")
+            start_idx = max(0, int(seg.start * sr))
+            end_idx = min(total_frames, int(seg.end * sr))
+            n_frames = end_idx - start_idx
+            if n_frames > 0:
+                with sf.SoundFile(vocal_path) as f:
+                    f.seek(start_idx)
+                    spk_data = f.read(n_frames)
+                sf.write(spk_ref_path, spk_data, sr)
+                speaker_ref_paths[spk] = spk_ref_path
 
     combined_audio = np.zeros(0, dtype=np.float32)
 
@@ -41,10 +67,11 @@ async def run_synthesize(
                 if not seg.translated:
                     return None
                 async with sem:
+                    seg_ref = speaker_ref_paths.get(seg.speaker, vocal_path) if seg.speaker else vocal_path
                     seg_output = os.path.join(temp_dir, f"seg_{i:04d}.wav")
                     await client.synthesize(
                         text=seg.translated,
-                        reference_audio=vocal_path,
+                        reference_audio=seg_ref,
                         output_path=seg_output,
                         target_duration=seg.duration,
                     )
@@ -56,12 +83,9 @@ async def run_synthesize(
             tasks = [_synth_seg(i, seg) for i, seg in enumerate(segments)]
             results = await asyncio.gather(*tasks)
 
-            sorted_results = sorted(
-                (r for r in results if r is not None),
-                key=lambda x: x[0],
-            )
-
-            for _, seg, seg_data in sorted_results:
+            for _, seg, seg_data in sorted(
+                (r for r in results if r is not None), key=lambda x: x[0]
+            ):
                 start_sample = int(seg.start * sr)
                 end_sample = start_sample + len(seg_data)
                 if end_sample > len(combined_audio):

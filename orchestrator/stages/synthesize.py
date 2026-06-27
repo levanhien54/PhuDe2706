@@ -67,7 +67,12 @@ async def run_synthesize(
                 if not seg.translated:
                     return None
                 async with sem:
-                    seg_ref = speaker_ref_paths.get(seg.speaker, vocal_path) if seg.speaker else vocal_path
+                    if not has_audio:
+                        seg_ref = None
+                    elif seg.speaker:
+                        seg_ref = speaker_ref_paths.get(seg.speaker, vocal_path)
+                    else:
+                        seg_ref = vocal_path
                     seg_output = os.path.join(temp_dir, f"seg_{i:04d}.wav")
                     await client.synthesize(
                         text=seg.translated,

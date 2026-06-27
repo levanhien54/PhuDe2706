@@ -6,7 +6,13 @@ from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
 
-_SEM = asyncio.Semaphore(10)
+_SEM: asyncio.Semaphore | None = None
+
+def _get_sem() -> asyncio.Semaphore:
+    global _SEM
+    if _SEM is None:
+        _SEM = asyncio.Semaphore(10)
+    return _SEM
 
 _TRANSLATE_PROMPT_VI = (
     "Dịch câu sau sang {target_lang} một cách tự nhiên, giữ đúng ngữ cảnh. "
@@ -29,7 +35,7 @@ class LLMClient(BaseClient):
         is_vi = target_lang.lower().startswith("tiếng việt") or target_lang.lower() in ("vi", "vietnamese")
         prompt_tpl = _TRANSLATE_PROMPT_VI if is_vi else _TRANSLATE_PROMPT_EN
         prompt = prompt_tpl.format(text=text, target_lang=target_lang)
-        async with _SEM:
+        async with _get_sem():
             if self.settings.llm_backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,

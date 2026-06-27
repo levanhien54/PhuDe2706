@@ -78,10 +78,11 @@ async def upload_video(file: UploadFile = File(...)):
     contents = await file.read()
     if len(contents) > MAX_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 500MB.")
-    file_path = os.path.join(input_dir, file.filename)
+    safe_name = os.path.basename(file.filename)
+    file_path = os.path.join(input_dir, safe_name)
     with open(file_path, "wb") as f:
         f.write(contents)
-    return {"filename": file.filename, "message": "Uploaded successfully"}
+    return {"filename": safe_name, "message": "Uploaded successfully"}
 
 async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
     update_job_status(job_id, "PROCESSING")

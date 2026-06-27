@@ -13,7 +13,8 @@ def init_db():
     os.makedirs(settings.data_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
-    
+    cursor.execute("PRAGMA journal_mode=WAL")
+
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,

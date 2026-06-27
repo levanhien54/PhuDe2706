@@ -32,6 +32,8 @@ function App() {
     if (!selectedVideo) return;
     let stopped = false;
 
+    const STATIC_STATUSES = new Set(['AWAITING_REVIEW', 'COMPLETED', 'FAILED', 'NOT_FOUND']);
+
     const fetchStatus = async () => {
       try {
         const res = await fetch(`http://localhost:8000/api/status/${selectedVideo}`);
@@ -39,17 +41,17 @@ function App() {
         setStatusData(data);
         if (data.status === 'COMPLETED') fetchVideos();
         if (data.status === 'COMPLETED' || data.status === 'FAILED') stopped = true;
+        return data.status;
       } catch (e) {
         console.error(e);
+        return null;
       }
     };
 
-    const STATIC_STATUSES = new Set(['AWAITING_REVIEW', 'COMPLETED', 'FAILED', 'NOT_FOUND']);
-
     const poll = async () => {
-      await fetchStatus();
+      const status = await fetchStatus();
       if (!stopped) {
-        const delay = STATIC_STATUSES.has(statusData?.status) ? 15000 : 2000;
+        const delay = STATIC_STATUSES.has(status) ? 15000 : 2000;
         setTimeout(poll, delay);
       }
     };

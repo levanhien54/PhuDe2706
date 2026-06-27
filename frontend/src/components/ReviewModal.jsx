@@ -10,6 +10,12 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
     fetchSegments();
   }, [jobId]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(debounceTimers.current).forEach(clearTimeout);
+    };
+  }, []);
+
   const fetchSegments = async () => {
     try {
       const res = await fetch(`http://localhost:8000/api/jobs/${jobId}/segments`);

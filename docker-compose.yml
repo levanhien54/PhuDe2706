@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build: 
+      context: ./orchestrator
+    container_name: ai_dubbing_orchestrator
+    volumes:
+      - ./data:/app/data
+      - ./orchestrator:/app/src
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - WHISPERX_API=http://whisperx:8000
+      - DEMUCS_API=http://demucs:8000
+      - TTS_API=http://tts:8000
+      - OMNIVOICE_API=http://omnivoice:3900
+      - TTS_ENGINE=omnivoice
+    depends_on:
+      - ollama
+    # Orchestrator không nhất thiết cần GPU, nhưng nếu dùng FFmpeg NVENC thì có thể cấp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_dubbing_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./models/ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Keep alive context
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+
+  # Lưu ý: Các service dưới đây sử dụng image giả định/phổ biến từ cộng đồng. 
+  # Trong môi trường thực tế, bạn sẽ cần clone các repo mã nguồn mở tương ứng và build image.
+  whisperx:
+    image: ahmetkca/whisperx-api:latest # Hoặc repo tự build
+    container_name: ai_dubbing_whisperx
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./models/whisper:/root/.cache/whisper
+      - ./data/temp:/app/temp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  demucs:
+    image: xserrat/facebook-demucs:latest # Chạy qua CLI hoặc custom FastAPI wrapper
+    container_name: ai_dubbing_demucs
+    volumes:
+      - ./data/temp:/data
+    # Demucs service có thể được gọi bằng 'docker exec' từ orchestrator thay vì API nếu không có sẵn HTTP wrapper
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # command: tail -f /dev/null # Keep alive để orchestrator exec vào
+    entrypoint: ["tail", "-f", "/dev/null"]
+
+  tts:
+    image: mikan/gpt-sovits-api:latest # Giả định image cho GPT-SoVITS API
+    container_name: ai_dubbing_tts
+    ports:
+      - "9880:9880"
+    volumes:
+      - ./models/tts:/app/models
+      - ./data/temp:/app/temp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  omnivoice:
+    image: ghcr.io/debpalash/omnivoice-studio:latest
+    container_name: ai_dubbing_omnivoice
+    ports:
+      - "3900:3900"
+    volumes:
+      - ./models/omnivoice:/root/.local/share/omnivoice
+      - ./data/temp:/app/temp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

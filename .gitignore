@@ -13,3 +13,4 @@ data/temp/*
 data/output/*
 !data/output/.gitkeep
 models/
+.worktrees/

@@ -1,9 +1,16 @@
 import asyncio
+import mimetypes
+import os
 import httpx
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
+
+
+def _guess_mime(path: str) -> str:
+    mime, _ = mimetypes.guess_type(path)
+    return mime or "application/octet-stream"
 
 
 class ServiceUnavailableError(Exception):
@@ -36,7 +43,14 @@ class BaseClient:
                         )
                     resp.raise_for_status()
                     return resp.json()
-            except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_exc = e
+                wait = 2 ** attempt
+                log.warning("http_retry", attempt=attempt + 1, url=url, error=str(e), wait=wait)
+                await asyncio.sleep(wait)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code < 500:
+                    raise  # 4xx: don't retry, propagate immediately
                 last_exc = e
                 wait = 2 ** attempt
                 log.warning("http_retry", attempt=attempt + 1, url=url, error=str(e), wait=wait)
@@ -50,7 +64,8 @@ class BaseClient:
             try:
                 async with httpx.AsyncClient(timeout=self.settings.http_timeout) as client:
                     with open(file_path, "rb") as f:
-                        files = {"file": (file_path.split("/")[-1], f, "audio/wav")}
+                        filename = os.path.basename(file_path)
+                        files = {"file": (filename, f, _guess_mime(file_path))}
                         data = extra_data or {}
                         resp = await client.post(url, files=files, data=data)
                         if resp.status_code >= 500:
@@ -59,7 +74,14 @@ class BaseClient:
                             )
                         resp.raise_for_status()
                         return resp.json()
-            except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_exc = e
+                wait = 2 ** attempt
+                log.warning("http_retry", attempt=attempt + 1, url=url, error=str(e), wait=wait)
+                await asyncio.sleep(wait)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code < 500:
+                    raise  # 4xx: don't retry, propagate immediately
                 last_exc = e
                 wait = 2 ** attempt
                 log.warning("http_retry", attempt=attempt + 1, url=url, error=str(e), wait=wait)

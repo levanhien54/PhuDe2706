@@ -1,4 +1,4 @@
-from orchestrator.clients.base import BaseClient
+from orchestrator.clients.base import BaseClient, ServiceUnavailableError
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
@@ -11,6 +11,8 @@ class DemucsClient(BaseClient):
 
     async def separate(self, video_path: str, output_dir: str) -> dict[str, str]:
         log.info("demucs_separate_start", video=video_path)
+        if not await self.health_check():
+            raise ServiceUnavailableError("Demucs service is not available")
         result = await self.post_file("/separate", video_path, {"output_dir": output_dir})
         log.info("demucs_separate_done", vocal=result.get("vocal"))
         return {"vocal": result["vocal"], "background": result["background"]}

@@ -61,7 +61,7 @@ async def run_synthesize(
     try:
         async with vram.slot("tts", _TTS_VRAM_GB):
             client = TTSClient(settings)
-            sem = asyncio.Semaphore(8)
+            sem = asyncio.Semaphore(2)
 
             async def _synth_seg(i, seg):
                 if not seg.translated:
@@ -79,6 +79,7 @@ async def run_synthesize(
                         reference_audio=seg_ref,
                         output_path=seg_output,
                         target_duration=seg.duration,
+                        language=job.target_language,
                     )
                     stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
                     stretch_audio(seg_output, stretched_path, seg.duration)

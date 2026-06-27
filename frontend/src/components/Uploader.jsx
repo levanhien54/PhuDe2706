@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileVideo, CheckCircle2 } from 'lucide-react';
+import { API_BASE } from '../api';
 
 export default function Uploader({ onUploadSuccess }) {
   const [isDragging, setIsDragging] = useState(false);
@@ -42,7 +43,7 @@ export default function Uploader({ onUploadSuccess }) {
     formData.append('file', file);
 
     try {
-      const res = await fetch('http://localhost:8000/api/upload', {
+      const res = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
         body: formData,
       });

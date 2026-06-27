@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Uploader from './components/Uploader';
 import PipelineProgress from './components/PipelineProgress';
 import VideoPlayer from './components/VideoPlayer';
 import ReviewModal from './components/ReviewModal';
+import Toast from './components/Toast';
 import { PlayCircle, Settings, RefreshCw, Film, Edit3 } from 'lucide-react';
+import { API_BASE } from './api';
 
 function App() {
   const [videos, setVideos] = useState([]);
@@ -11,22 +13,38 @@ function App() {
   const [statusData, setStatusData] = useState(null);
   const [targetLang, setTargetLang] = useState('Tiếng Việt');
   const [showReview, setShowReview] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+  };
 
   const fetchVideos = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/videos');
+      const res = await fetch(`${API_BASE}/api/videos`);
       const data = await res.json();
-      setVideos(data.videos || []);
+      const list = data.videos || [];
+      setVideos(list);
+      return list;
     } catch (e) {
       console.error(e);
+      return [];
     }
   };
 
   useEffect(() => {
-    fetchVideos();
-    const interval = setInterval(fetchVideos, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    const ACTIVE_STATUSES = new Set(['PROCESSING', 'PROCESSING_PHASE2', 'QUEUED']);
+    let timeoutId;
+
+    const tick = async () => {
+      const list = await fetchVideos();
+      const hasActive = list.some(v => ACTIVE_STATUSES.has(v.status));
+      timeoutId = setTimeout(tick, hasActive ? 5000 : 30000);
+    };
+
+    tick();
+    return () => clearTimeout(timeoutId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedVideo) return;
@@ -36,7 +54,7 @@ function App() {
 
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/status/${selectedVideo}`);
+        const res = await fetch(`${API_BASE}/api/status/${selectedVideo}`);
         const data = await res.json();
         setStatusData(data);
         if (data.status === 'COMPLETED') fetchVideos();
@@ -63,20 +81,22 @@ function App() {
   const handleUploadSuccess = (filename) => {
     fetchVideos();
     setSelectedVideo(filename);
+    showToast('Tải video lên thành công!', 'success');
   };
 
   const startDubbing = async (filename) => {
     try {
-      await fetch(`http://localhost:8000/api/dub/${filename}?target_lang=${encodeURIComponent(targetLang)}`, { method: 'POST' });
+      await fetch(`${API_BASE}/api/dub/${filename}?target_lang=${encodeURIComponent(targetLang)}`, { method: 'POST' });
       setSelectedVideo(filename);
       // Re-fetch status immediately
-      const res = await fetch(`http://localhost:8000/api/status/${filename}`);
+      const res = await fetch(`${API_BASE}/api/status/${filename}`);
       const data = await res.json();
       setStatusData(data);
       fetchVideos();
+      showToast('Đã bắt đầu lồng tiếng!', 'success');
     } catch (e) {
       console.error(e);
-      alert('Không thể bắt đầu lồng tiếng');
+      showToast('Không thể bắt đầu lồng tiếng', 'error');
     }
   };
 
@@ -106,7 +126,10 @@ function App() {
               <Film size={20} className="gradient-text" /> Thư viện Video
             </h3>
             {videos.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>Chưa có video nào</p>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', padding: '40px 0', opacity: 0.6 }}>
+                <Film size={48} />
+                <p style={{ color: 'var(--text-muted)' }}>Chưa có video nào trong thư viện</p>
+              </div>
             ) : (
               videos.map((v) => (
                 <div 
@@ -191,8 +214,22 @@ function App() {
         <ReviewModal
           jobId={videos.find(v => v.filename === selectedVideo)?.job_id ?? statusData?.job_id}
           onClose={() => setShowReview(false)}
-          onResume={() => { setShowReview(false); fetchVideos(); }}
+          onResume={() => { 
+            setShowReview(false); 
+            fetchVideos(); 
+            showToast('Đã lưu thay đổi, tiếp tục lồng tiếng!', 'success');
+          }}
         />
+      )}
+
+      {toast && (
+        <div className="toast-container">
+          <Toast 
+            message={toast.message} 
+            type={toast.type} 
+            onClose={() => setToast(null)} 
+          />
+        </div>
       )}
     </div>
   );

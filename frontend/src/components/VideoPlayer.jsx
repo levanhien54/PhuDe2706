@@ -1,5 +1,6 @@
 import React from 'react';
 import { Play } from 'lucide-react';
+import { API_BASE } from '../api';
 
 export default function VideoPlayer({ filename, hasOutput }) {
   if (!filename || !hasOutput) {
@@ -25,7 +26,7 @@ export default function VideoPlayer({ filename, hasOutput }) {
 
   // To play the video, we assume the backend serves static files or we just construct the URL if exposed
   // We need to add static file serving to FastAPI backend!
-  const videoUrl = `http://localhost:8000/output/${filename.replace('.mp4', '_dubbed.mp4')}`;
+  const videoUrl = `${API_BASE}/output/${filename.replace('.mp4', '_dubbed.mp4')}`;
 
   return (
     <div className="glass glass-panel animate-slide-up" style={{ animationDelay: '0.3s' }}>

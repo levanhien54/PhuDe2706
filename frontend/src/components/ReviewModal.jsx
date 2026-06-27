@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Play } from 'lucide-react';
+import { API_BASE } from '../api';
 
 export default function ReviewModal({ jobId, onClose, onResume }) {
   const [segments, setSegments] = useState([]);
@@ -18,7 +19,7 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
 
   const fetchSegments = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/jobs/${jobId}/segments`);
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/segments`);
       const data = await res.json();
       setSegments(data.segments);
     } catch (e) {
@@ -36,7 +37,7 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
     clearTimeout(debounceTimers.current[id]);
     debounceTimers.current[id] = setTimeout(async () => {
       try {
-        await fetch(`http://localhost:8000/api/jobs/${jobId}/segments`, {
+        await fetch(`${API_BASE}/api/jobs/${jobId}/segments`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, translated_text: newText })
@@ -49,7 +50,7 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
 
   const handleResume = async () => {
     try {
-      await fetch(`http://localhost:8000/api/jobs/${jobId}/resume`, { method: 'POST' });
+      await fetch(`${API_BASE}/api/jobs/${jobId}/resume`, { method: 'POST' });
       onResume();
     } catch (e) {
       console.error(e);

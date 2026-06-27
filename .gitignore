@@ -8,6 +8,8 @@ build/
 .pytest_cache/
 .mypy_cache/
 *.log
-data/temp/
-data/output/
+data/temp/*
+!data/temp/.gitkeep
+data/output/*
+!data/output/.gitkeep
 models/

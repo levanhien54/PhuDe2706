@@ -66,6 +66,9 @@ async def run_synthesize(
             async def _synth_seg(i, seg):
                 if not seg.translated:
                     return None
+                if seg.duration <= 0:
+                    log.warning("skip_zero_duration_segment", index=i, start=seg.start, end=seg.end)
+                    return None
                 async with sem:
                     if not has_audio:
                         seg_ref = None

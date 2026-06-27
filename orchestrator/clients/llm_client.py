@@ -114,6 +114,9 @@ class LLMClient(BaseClient):
             parsed = json.loads(raw_out.strip())
 
             parsed_dict = {item["id"]: item.get("translated", "") for item in parsed if "id" in item}
+            missing = [i for i in range(len(chunk)) if i not in parsed_dict]
+            if missing:
+                log.warning("batch_translation_partial", missing_count=len(missing), total=len(chunk))
             translations = [parsed_dict.get(i, chunk[i].text) for i in range(len(chunk))]
 
             return translations

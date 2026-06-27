@@ -13,9 +13,14 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float):
         raise ValueError(f"target_duration must be positive, got {target_duration}")
 
     # Load audio
-    y, sr = sf.read(input_path, dtype='float32', always_2d=False)
-    if y.ndim > 1:
-        y = y.mean(axis=1)  # stereo → mono
+    try:
+        y, sr = sf.read(input_path, dtype='float32', always_2d=False)
+        if y.ndim > 1:
+            y = y.mean(axis=1)  # stereo → mono
+    except Exception:
+        # soundfile can't decode compressed formats (mp3/m4a) — fall back to librosa/audioread
+        import librosa
+        y, sr = librosa.load(input_path, sr=None, mono=True)
     current_duration = len(y) / sr
 
     if current_duration <= 0:

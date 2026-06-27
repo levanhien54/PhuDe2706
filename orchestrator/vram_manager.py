@@ -35,3 +35,12 @@ class VRAMManager:
             yield
         finally:
             await self.release(service)
+
+
+_instance: "VRAMManager | None" = None
+
+def get_vram_manager(settings) -> "VRAMManager":
+    global _instance
+    if _instance is None:
+        _instance = VRAMManager(settings)
+    return _instance

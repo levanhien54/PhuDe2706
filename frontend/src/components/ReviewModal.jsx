@@ -1,13 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Play } from 'lucide-react';
 
 export default function ReviewModal({ jobId, onClose, onResume }) {
   const [segments, setSegments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const debounceTimers = useRef({});
 
   useEffect(() => {
     fetchSegments();
   }, [jobId]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(debounceTimers.current).forEach(clearTimeout);
+    };
+  }, []);
 
   const fetchSegments = async () => {
     try {
@@ -21,20 +28,23 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
     }
   };
 
-  const handleUpdate = async (id, newText) => {
-    // Optimistic update
+  const handleUpdate = (id, newText) => {
+    // Optimistic update immediately
     setSegments(prev => prev.map(s => s.id === id ? { ...s, translated_text: newText } : s));
-    
-    // Save to server
-    try {
-      await fetch(`http://localhost:8000/api/jobs/${jobId}/segments`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, translated_text: newText })
-      });
-    } catch (e) {
-      console.error(e);
-    }
+
+    // Debounce the API call 500ms
+    clearTimeout(debounceTimers.current[id]);
+    debounceTimers.current[id] = setTimeout(async () => {
+      try {
+        await fetch(`http://localhost:8000/api/jobs/${jobId}/segments`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, translated_text: newText })
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }, 500);
   };
 
   const handleResume = async () => {

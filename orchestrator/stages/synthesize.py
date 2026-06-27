@@ -1,3 +1,4 @@
+import asyncio
 import os, time
 import numpy as np
 import soundfile as sf
@@ -25,27 +26,33 @@ async def run_synthesize(
     final_output = os.path.join(temp_dir, "new_vocal.wav")
 
     try:
-        ref_data, sr = sf.read(vocal_path)
+        with sf.SoundFile(vocal_path) as f:
+            sr = f.samplerate
+            total_frames = f.frames
+            has_audio = True
     except Exception:
         sr = 22050
-        ref_data = np.zeros(0, dtype=np.float32)
+        total_frames = 0
+        has_audio = False
 
-    # Lọc danh sách các loa và đoạn có thời lượng dài nhất làm mẫu
-    speaker_refs = {}
+    # Build per-speaker reference clips from the longest segment per speaker
+    speaker_refs: dict[str, SrtSegment] = {}
     for seg in segments:
         if seg.speaker:
             if seg.speaker not in speaker_refs or seg.duration > speaker_refs[seg.speaker].duration:
                 speaker_refs[seg.speaker] = seg
 
-    # Trích xuất file mẫu cho từng người nói
-    speaker_ref_paths = {}
-    if ref_data.size > 0:
+    speaker_ref_paths: dict[str, str] = {}
+    if has_audio:
         for spk, seg in speaker_refs.items():
             spk_ref_path = os.path.join(temp_dir, f"{spk}_ref.wav")
             start_idx = max(0, int(seg.start * sr))
-            end_idx = min(len(ref_data), int(seg.end * sr))
-            spk_data = ref_data[start_idx:end_idx]
-            if spk_data.size > 0:
+            end_idx = min(total_frames, int(seg.end * sr))
+            n_frames = end_idx - start_idx
+            if n_frames > 0:
+                with sf.SoundFile(vocal_path) as f:
+                    f.seek(start_idx)
+                    spk_data = f.read(n_frames)
                 sf.write(spk_ref_path, spk_data, sr)
                 speaker_ref_paths[spk] = spk_ref_path
 
@@ -54,30 +61,46 @@ async def run_synthesize(
     try:
         async with vram.slot("tts", _TTS_VRAM_GB):
             client = TTSClient(settings)
-            for i, seg in enumerate(segments):
-                if not seg.translated:
-                    continue
-                seg_output = os.path.join(temp_dir, f"seg_{i:04d}.wav")
-                seg_ref_path = speaker_ref_paths.get(seg.speaker, vocal_path) if seg.speaker else vocal_path
-                
-                await client.synthesize(
-                    text=seg.translated,
-                    reference_audio=seg_ref_path,
-                    output_path=seg_output,
-                    target_duration=seg.duration,
-                )
-                stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
-                stretch_audio(seg_output, stretched_path, seg.duration)
+            sem = asyncio.Semaphore(8)
 
-                seg_data, _ = sf.read(stretched_path)
+            async def _synth_seg(i, seg):
+                if not seg.translated:
+                    return None
+                async with sem:
+                    if not has_audio:
+                        seg_ref = None
+                    elif seg.speaker:
+                        seg_ref = speaker_ref_paths.get(seg.speaker, vocal_path)
+                    else:
+                        seg_ref = vocal_path
+                    seg_output = os.path.join(temp_dir, f"seg_{i:04d}.wav")
+                    await client.synthesize(
+                        text=seg.translated,
+                        reference_audio=seg_ref,
+                        output_path=seg_output,
+                        target_duration=seg.duration,
+                    )
+                    stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
+                    stretch_audio(seg_output, stretched_path, seg.duration)
+                    seg_data, _ = sf.read(stretched_path)
+                    return (i, seg, seg_data)
+
+            tasks = [_synth_seg(i, seg) for i, seg in enumerate(segments)]
+            results = await asyncio.gather(*tasks)
+
+            for _, seg, seg_data in sorted(
+                (r for r in results if r is not None), key=lambda x: x[0]
+            ):
                 start_sample = int(seg.start * sr)
                 end_sample = start_sample + len(seg_data)
                 if end_sample > len(combined_audio):
                     combined_audio = np.pad(combined_audio, (0, end_sample - len(combined_audio)))
                 combined_audio[start_sample:end_sample] += seg_data
 
-        # Chống clipping
-        combined_audio = np.clip(combined_audio, -1.0, 1.0)
+        peak = np.max(np.abs(combined_audio))
+        if peak > 1.0:
+            combined_audio = combined_audio / peak
+
         sf.write(final_output, combined_audio, sr)
         return StageResult(
             stage="synthesize",

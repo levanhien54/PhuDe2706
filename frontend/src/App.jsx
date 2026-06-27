@@ -30,8 +30,10 @@ function App() {
 
   useEffect(() => {
     if (!selectedVideo) return;
-    
     let stopped = false;
+
+    const STATIC_STATUSES = new Set(['AWAITING_REVIEW', 'COMPLETED', 'FAILED', 'NOT_FOUND']);
+
     const fetchStatus = async () => {
       try {
         const res = await fetch(`http://localhost:8000/api/status/${selectedVideo}`);
@@ -39,14 +41,23 @@ function App() {
         setStatusData(data);
         if (data.status === 'COMPLETED') fetchVideos();
         if (data.status === 'COMPLETED' || data.status === 'FAILED') stopped = true;
+        return data.status;
       } catch (e) {
         console.error(e);
+        return null;
       }
     };
 
-    fetchStatus();
-    const interval = setInterval(() => { if (!stopped) fetchStatus(); }, 2000);
-    return () => clearInterval(interval);
+    const poll = async () => {
+      const status = await fetchStatus();
+      if (!stopped) {
+        const delay = STATIC_STATUSES.has(status) ? 15000 : 2000;
+        setTimeout(poll, delay);
+      }
+    };
+
+    poll();
+    return () => { stopped = true; };
   }, [selectedVideo]);
 
   const handleUploadSuccess = (filename) => {

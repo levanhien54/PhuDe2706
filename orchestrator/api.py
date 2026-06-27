@@ -56,9 +56,18 @@ class SegmentUpdate(BaseModel):
 
 ALLOWED_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
 
+def _is_valid_video_header(head: bytes) -> bool:
+    """Validate first 12 bytes look like a known video container."""
+    if len(head) < 12:
+        return False
+    is_mp4_mov = head[4:8] in (b'ftyp', b'moov', b'mdat', b'wide', b'free', b'skip')
+    is_ebml = head[:4] == b'\x1a\x45\xdf\xa3'  # MKV and WebM share this
+    is_avi = head[:4] == b'RIFF' and head[8:12] == b'AVI '
+    return is_mp4_mov or is_ebml or is_avi
+
 @app.get("/api/videos")
 async def list_videos():
-    videos = [f for f in os.listdir(input_dir) if f.endswith(".mp4")]
+    videos = [f for f in os.listdir(input_dir) if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
     jobs_map = get_jobs_by_filenames(videos)  # single query
     result = []
     for v in videos:
@@ -86,28 +95,34 @@ def _cleanup_temp(base_name: str, data_dir: str):
 @app.post("/api/upload")
 async def upload_video(file: UploadFile = File(...)):
     MAX_SIZE = 500 * 1024 * 1024
-    contents = await file.read()
-    if len(contents) > MAX_SIZE:
-        raise HTTPException(status_code=413, detail="File too large. Maximum size is 500MB.")
+    CHUNK = 1024 * 1024  # 1MB
 
     safe_name = os.path.basename(file.filename)
     ext = os.path.splitext(safe_name)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}")
 
-    # Check video magic bytes (MP4: ftyp at offset 4, MKV: EBML header 1A45DFA3, AVI: RIFF)
-    if len(contents) >= 12:
-        is_mp4 = contents[4:8] == b'ftyp'
-        is_mkv = contents[:4] == b'\x1a\x45\xdf\xa3'
-        is_avi = contents[:4] == b'RIFF' and contents[8:12] == b'AVI '
-        is_mov = contents[4:8] in (b'ftyp', b'moov', b'mdat', b'wide', b'free')
-        is_webm = contents[:4] == b'\x1a\x45\xdf\xa3'
-        if not (is_mp4 or is_mkv or is_avi or is_mov or is_webm):
-            raise HTTPException(status_code=415, detail="File content does not appear to be a valid video.")
-
     file_path = os.path.join(input_dir, safe_name)
-    with open(file_path, "wb") as f:
-        f.write(contents)
+    total = 0
+    first_chunk = b""
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(CHUNK)
+                if not chunk:
+                    break
+                if not first_chunk:
+                    first_chunk = chunk[:12]
+                    if not _is_valid_video_header(first_chunk):
+                        raise HTTPException(status_code=415, detail="File content does not appear to be a valid video.")
+                total += len(chunk)
+                if total > MAX_SIZE:
+                    raise HTTPException(status_code=413, detail="File too large. Maximum size is 500MB.")
+                f.write(chunk)
+    except HTTPException:
+        if os.path.exists(file_path):
+            os.remove(file_path)  # clean up partial upload
+        raise
     return {"filename": safe_name, "message": "Uploaded successfully"}
 
 async def run_pipeline_task(job_id: str, filename: str, target_lang: str):

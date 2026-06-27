@@ -98,7 +98,7 @@ def get_job_by_filename(filename: str) -> Dict[str, Any]:
     return None
 
 def get_jobs_by_filenames(filenames: list) -> dict:
-    """Returns {filename: job_dict} for all matching filenames."""
+    """Returns {filename: job_dict} for the latest job per filename. SQLite-version-agnostic."""
     if not filenames:
         return {}
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -106,7 +106,7 @@ def get_jobs_by_filenames(filenames: list) -> dict:
     cursor = conn.cursor()
     placeholders = ",".join("?" * len(filenames))
     cursor.execute(
-        f"SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY filename ORDER BY created_at DESC) rn FROM jobs WHERE filename IN ({placeholders})) WHERE rn=1",
+        f"SELECT * FROM jobs WHERE filename IN ({placeholders}) ORDER BY created_at DESC",
         filenames
     )
     rows = cursor.fetchall()
@@ -114,8 +114,9 @@ def get_jobs_by_filenames(filenames: list) -> dict:
     result = {}
     for row in rows:
         d = dict(row)
+        if d['filename'] in result:
+            continue  # already have the latest (DESC order)
         d['results'] = json.loads(d['results']) if d['results'] else {}
-        d.pop('rn', None)
         result[d['filename']] = d
     return result
 

@@ -43,6 +43,21 @@ services:
     <<: *gpu-resources
     restart: on-failure:3
 
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ai_dubbing_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - orchestrator
+    restart: always
+
   ollama:
     image: ollama/ollama:latest
     container_name: ai_dubbing_ollama

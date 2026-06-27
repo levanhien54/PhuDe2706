@@ -14,3 +14,7 @@ data/output/*
 !data/output/.gitkeep
 models/
 .worktrees/
+
+# input videos (keep dir only)
+data/input/*
+!data/input/.gitkeep

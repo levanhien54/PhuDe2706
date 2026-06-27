@@ -4,7 +4,7 @@ import time
 
 from orchestrator.models import PipelineJob, StageResult, SrtSegment
 from orchestrator.config import Settings
-from orchestrator.vram_manager import VRAMManager
+from orchestrator.vram_manager import VRAMManager, get_vram_manager
 from orchestrator.logger import get_logger, bind_job_context, clear_job_context
 from orchestrator.stages import (
     run_audio_separate, run_transcribe, run_translate,
@@ -16,7 +16,7 @@ log = get_logger(__name__)
 
 async def run_pipeline_phase1(job: PipelineJob, settings: Settings) -> tuple[dict[str, StageResult], list[SrtSegment]]:
     bind_job_context(job.job_id, job.filename)
-    vram = VRAMManager(settings)
+    vram = get_vram_manager(settings)
     results: dict[str, StageResult] = {}
     
     log.info("pipeline_phase1_start", vram_profile=settings.vram_profile, target_lang=job.target_language)
@@ -57,7 +57,7 @@ async def run_pipeline_phase1(job: PipelineJob, settings: Settings) -> tuple[dic
 
 async def run_pipeline_phase2(job: PipelineJob, segments: list[SrtSegment], settings: Settings) -> dict[str, StageResult]:
     bind_job_context(job.job_id, job.filename)
-    vram = VRAMManager(settings)
+    vram = get_vram_manager(settings)
     results: dict[str, StageResult] = {}
     
     log.info("pipeline_phase2_start", vram_profile=settings.vram_profile, lipsync=settings.enable_lipsync)

@@ -1,6 +1,7 @@
 import os
 import uuid
 import asyncio
+import shutil
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,11 +67,20 @@ async def list_videos():
         })
     return {"videos": result}
 
+def _cleanup_temp(base_name: str, data_dir: str):
+    temp_dir = os.path.join(data_dir, "temp", base_name)
+    if os.path.isdir(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
 @app.post("/api/upload")
 async def upload_video(file: UploadFile = File(...)):
+    MAX_SIZE = 500 * 1024 * 1024  # 500MB
+    contents = await file.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 500MB.")
     file_path = os.path.join(input_dir, file.filename)
     with open(file_path, "wb") as f:
-        f.write(await file.read())
+        f.write(contents)
     return {"filename": file.filename, "message": "Uploaded successfully"}
 
 async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
@@ -105,10 +115,12 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
             update_job_status(job_id, "AWAITING_REVIEW", phase1_summary)
         else:
             update_job_status(job_id, "FAILED", phase1_summary)
-            
+            _cleanup_temp(base_name, settings.data_dir)
+
     except Exception as e:
         log.error("pipeline_error", error=str(e))
         update_job_status(job_id, "FAILED", error=str(e))
+        _cleanup_temp(base_name, settings.data_dir)
 
 
 @app.post("/api/dub/{filename}")
@@ -180,9 +192,11 @@ async def run_pipeline_resume_task(job_id: str):
         final_res["phase2"] = {k: {"success": v.success, "duration": v.duration_seconds} for k, v in results.items()}
         
         update_job_status(job_id, "COMPLETED" if success else "FAILED", final_res)
+        _cleanup_temp(job.base_name, settings.data_dir)
     except Exception as e:
         log.error("pipeline_resume_error", error=str(e))
         update_job_status(job_id, "FAILED", error=str(e))
+        _cleanup_temp(job.base_name, settings.data_dir)
 
 @app.post("/api/jobs/{job_id}/resume")
 async def resume_dubbing(job_id: str, background_tasks: BackgroundTasks):

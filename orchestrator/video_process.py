@@ -2,47 +2,143 @@ import os
 import cv2
 import math
 import shutil
+import queue
+import threading as _threading
+import subprocess
+import numpy as np
 from paddleocr import PaddleOCR
 
-# Khởi tạo mô hình OCR một lần (singleton hoặc global) để tiết kiệm thời gian
+# --- Opt 7: Threading lock for OCR singleton (multi-job safety) ---
+_ocr_lock = _threading.Lock()
 _ocr_instance = None
 
 def get_ocr_instance():
     global _ocr_instance
-    if _ocr_instance is None:
-        # Sử dụng lang='en', tắt angle_cls để tiết kiệm thời gian
-        # Dùng GPU nếu có sẵn
-        _ocr_instance = PaddleOCR(use_angle_cls=False, lang='en', use_gpu=True)
-    return _ocr_instance
+    with _ocr_lock:
+        if _ocr_instance is None:
+            # Opt 1: Detection-only mode (rec=False) — 5x faster, no text recognition needed
+            _ocr_instance = PaddleOCR(use_angle_cls=False, lang='en', use_gpu=True, rec=False)
+        return _ocr_instance
 
-def apply_blur_to_frame(frame, boxes):
-    """Làm mờ các vùng chứa chữ trong frame bằng Gaussian Blur"""
-    height, width = frame.shape[:2]
+
+# --- Opt 2: Downscale frame for OCR, scale boxes back ---
+OCR_MAX_H = 720
+
+def _scale_frame_for_ocr(frame):
+    h, w = frame.shape[:2]
+    if h <= OCR_MAX_H:
+        return frame, 1.0
+    scale = OCR_MAX_H / h
+    small = cv2.resize(frame, (int(w * scale), OCR_MAX_H), interpolation=cv2.INTER_AREA)
+    return small, scale
+
+def _scale_boxes_up(boxes, scale):
+    if scale == 1.0:
+        return boxes
+    return [(int(x/scale), int(y/scale), int(w/scale), int(h/scale)) for x, y, w, h in boxes]
+
+
+def _parse_ocr_boxes(result, scale, width, height):
+    """Parse OCR result (rec=False format) into list of (x, y, w, h) tuples."""
+    boxes = []
+    if not result or not result[0]:
+        return boxes
+    # rec=False: result[0] = list of [box, score]
+    for item in result[0]:
+        try:
+            box = item[0]  # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+            x_coords = [p[0] for p in box]
+            y_coords = [p[1] for p in box]
+
+            x_min = int(min(x_coords))
+            y_min = int(min(y_coords))
+            x_max = int(max(x_coords))
+            y_max = int(max(y_coords))
+
+            w_box = x_max - x_min
+            h_box = y_max - y_min
+
+            pad = 5
+            x = max(0, x_min - pad)
+            y = max(0, y_min - pad)
+            w_final = min(width - x, w_box + pad * 2)
+            h_final = min(height - y, h_box + pad * 2)
+
+            if w_final > 0 and h_final > 0:
+                # Scale box back to original frame size
+                if scale != 1.0:
+                    x = int(x / scale)
+                    y = int(y / scale)
+                    w_final = int(w_final / scale)
+                    h_final = int(h_final / scale)
+                boxes.append((x, y, w_final, h_final))
+        except Exception:
+            pass
+    return boxes
+
+
+# --- Opt 3: Static box detection from first N frames ---
+STATIC_SCAN_FRAMES = 10
+STATIC_THRESHOLD = 0.7  # box must appear in 70% of scan frames
+
+def _detect_static_boxes(cap, ocr, fps, width, height):
+    """Scan first N frames to find static/persistent text regions (watermarks, logos)."""
+    box_counts = {}   # key: (x//20, y//20) grid cell → count
+    box_map = {}      # grid cell → representative (x, y, w, h)
+
+    frame_step = max(1, int(fps / 2))
+    scanned = 0
+    frame_idx = 0
+
+    while scanned < STATIC_SCAN_FRAMES:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        small, scale = _scale_frame_for_ocr(frame)
+        with _ocr_lock:
+            result = ocr.ocr(small, cls=False)
+        boxes = _parse_ocr_boxes(result, scale, width, height)
+        for box in boxes:
+            x, y, w, h = box
+            key = (x // 20, y // 20)
+            box_counts[key] = box_counts.get(key, 0) + 1
+            box_map[key] = box
+        scanned += 1
+        frame_idx += frame_step
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # rewind
+
+    threshold = max(1, int(STATIC_SCAN_FRAMES * STATIC_THRESHOLD))
+    static = [box_map[k] for k, cnt in box_counts.items() if cnt >= threshold]
+    return static
+
+
+# --- Opt 4: cv2.inpaint instead of GaussianBlur ---
+def apply_inpaint_to_frame(frame, boxes):
+    """Inpaint text regions using TELEA algorithm for cleaner results."""
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     for (x, y, w, h) in boxes:
-        # Lấy vùng ROI (Region of Interest)
-        roi = frame[y:y+h, x:x+w]
-        if roi.size == 0:
-            continue
-        
-        # Áp dụng bộ lọc mờ (kích thước kernel lẻ và lớn để mờ nhòe chữ)
-        # Kích thước kernel phụ thuộc vào độ lớn của hộp, nhưng cố định 51x51 cũng đủ tốt
-        kernel_w = min(w if w % 2 != 0 else w - 1, 51)
-        kernel_h = min(h if h % 2 != 0 else h - 1, 51)
-        kernel_w = max(3, kernel_w)
-        kernel_h = max(3, kernel_h)
-        
-        blurred_roi = cv2.GaussianBlur(roi, (kernel_w, kernel_h), 0)
-        frame[y:y+h, x:x+w] = blurred_roi
-        
-    return frame
+        # expand mask slightly for better inpainting
+        pad = 3
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(frame.shape[1], x + w + pad)
+        y2 = min(frame.shape[0], y + h + pad)
+        mask[y1:y2, x1:x2] = 255
+    if mask.max() == 0:
+        return frame
+    return cv2.inpaint(frame, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+
 
 def remove_watermark_from_video(input_path: str, output_path: str):
     """
-    Tự động phát hiện và làm mờ toàn bộ chữ động trong video.
-    Quét OCR 2 lần mỗi giây, sau đó áp dụng Blur lên từng khung hình.
+    Tự động phát hiện và xóa toàn bộ chữ động trong video.
+    Quét OCR 2 lần mỗi giây (detection-only), inpaint các vùng phát hiện.
+    Optimizations: det-only OCR, downscale, static boxes, inpaint, threading, FFV1, lock.
     """
     print(f"[VideoProcess] Bắt đầu xử lý xóa chữ động cho: {input_path}")
-    
+
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         print(f"[VideoProcess] Lỗi: Không thể mở video {input_path}")
@@ -51,81 +147,129 @@ def remove_watermark_from_video(input_path: str, output_path: str):
     fps = cap.get(cv2.CAP_PROP_FPS)
     if math.isnan(fps) or fps == 0:
         fps = 25.0
-        
+
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    # Chuẩn bị VideoWriter
-    # Sử dụng mã mp4v (hoặc avc1). Khuyến nghị mp4v để tương thích cao trên OpenCV
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
+
     ocr = get_ocr_instance()
-    
-    # Tính toán chu kỳ quét (Chỉ quét 2 lần 1 giây)
-    frame_skip = max(1, int(fps / 2))
-    
-    cached_boxes = []
-    frame_count = 0
-    
+
+    # --- Opt 3: Detect static boxes from first N frames ---
+    print(f"[VideoProcess] Quét {STATIC_SCAN_FRAMES} frames đầu để tìm watermark tĩnh...")
+    cap_scan = cv2.VideoCapture(input_path)
+    try:
+        static_boxes = _detect_static_boxes(cap_scan, ocr, fps, width, height)
+    except Exception as e:
+        print(f"[VideoProcess] Cảnh báo: Không thể quét static boxes: {e}")
+        static_boxes = []
+    finally:
+        cap_scan.release()
+
+    print(f"[VideoProcess] Phát hiện {len(static_boxes)} static box(es).")
+
+    # Rewind main cap to start
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    # --- Opt 6: FFV1 lossless codec ---
+    output_path_avi = output_path.replace('.mp4', '_raw.avi')
+    use_ffv1 = False
+    try:
+        fourcc_ffv1 = cv2.VideoWriter_fourcc(*'FFV1')
+        test_writer = cv2.VideoWriter(output_path_avi, fourcc_ffv1, fps, (width, height))
+        if test_writer.isOpened():
+            use_ffv1 = True
+            test_writer.release()
+        else:
+            test_writer.release()
+    except Exception:
+        pass
+
+    if use_ffv1:
+        fourcc = cv2.VideoWriter_fourcc(*'FFV1')
+        write_path = output_path_avi
+        print(f"[VideoProcess] Sử dụng codec FFV1 lossless → {write_path}")
+    else:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        write_path = output_path
+        print(f"[VideoProcess] FFV1 không khả dụng, fallback sang mp4v")
+
+    out = cv2.VideoWriter(write_path, fourcc, fps, (width, height))
+
+    ocr_fps = 2.0
+    frame_skip = max(1, int(fps / ocr_fps))
+
     print(f"[VideoProcess] Tổng số frame: {total_frames}, Quét OCR mỗi {frame_skip} frames.")
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-            
-        # 1. Gọi AI OCR ở các khung hình được chọn
-        if frame_count % frame_skip == 0:
-            # Gợi ý tối ưu: Nếu chỉ cần nhận diện tọa độ (không cần đọc nội dung chữ), 
-            # có thể cấu hình PaddleOCR(det=True, rec=False) ở bản cập nhật sau để nhanh gấp 5 lần.
-            result = ocr.ocr(frame, cls=False)
-            
-            current_boxes = []
-            if result and result[0]:
-                for line in result[0]:
-                    try:
-                        box = line[0] # box = [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-                        x_coords = [p[0] for p in box]
-                        y_coords = [p[1] for p in box]
-                        
-                        x_min = int(min(x_coords))
-                        y_min = int(min(y_coords))
-                        x_max = int(max(x_coords))
-                        y_max = int(max(y_coords))
-                        
-                        w_box = x_max - x_min
-                        h_box = y_max - y_min
-                        
-                        pad = 5
-                        x = max(0, x_min - pad)
-                        y = max(0, y_min - pad)
-                        w = min(width - x, w_box + pad * 2)
-                        h = min(height - y, h_box + pad * 2)
-                        
-                        if w > 0 and h > 0:
-                            current_boxes.append((x, y, w, h))
-                    except Exception as e:
-                        pass # Bỏ qua nếu có lỗi parse box
-            
-            # Cập nhật cache tọa độ mới
-            cached_boxes = current_boxes
-        
-        # 2. Áp dụng làm mờ dựa trên danh sách tọa độ đang có
-        if cached_boxes:
-            frame = apply_blur_to_frame(frame, cached_boxes)
-            
-        # 3. Ghi vào video
-        out.write(frame)
-        
-        frame_count += 1
-        if frame_count % (int(fps) * 5) == 0:
-            print(f"[VideoProcess] Đã xử lý {frame_count}/{total_frames} frames...")
+
+    # --- Opt 5: Threading pipeline with queue ---
+    QUEUE_SIZE = 8
+    read_q = queue.Queue(maxsize=QUEUE_SIZE)
+    write_q = queue.Queue(maxsize=QUEUE_SIZE)
+    SENTINEL = object()  # signals end of stream
+
+    def reader_thread():
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                read_q.put(SENTINEL)
+                break
+            read_q.put(frame)
+
+    def processor_thread():
+        cached = []
+        idx = 0
+        while True:
+            frame = read_q.get()
+            if frame is SENTINEL:
+                write_q.put(SENTINEL)
+                break
+            if idx % frame_skip == 0:
+                small, scale = _scale_frame_for_ocr(frame)
+                # Opt 7: lock OCR access
+                with _ocr_lock:
+                    result = ocr.ocr(small, cls=False)
+                cached = _parse_ocr_boxes(result, scale, width, height)
+            all_boxes = list(static_boxes) + cached
+            if all_boxes:
+                frame = apply_inpaint_to_frame(frame, all_boxes)
+            write_q.put(frame)
+            idx += 1
+            if idx % (int(fps) * 5) == 0:
+                print(f"[VideoProcess] Đã xử lý ~{idx}/{total_frames} frames...")
+
+    def writer_thread():
+        while True:
+            frame = write_q.get()
+            if frame is SENTINEL:
+                break
+            out.write(frame)
+
+    threads = [
+        _threading.Thread(target=reader_thread, daemon=True),
+        _threading.Thread(target=processor_thread, daemon=True),
+        _threading.Thread(target=writer_thread, daemon=True),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
     cap.release()
     out.release()
+
+    # --- Opt 6: Remux with FFmpeg if we used FFV1 ---
+    if use_ffv1:
+        try:
+            print(f"[VideoProcess] Remux FFV1 → {output_path} (lossless copy)...")
+            subprocess.run(
+                ['ffmpeg', '-y', '-i', write_path, '-c:v', 'copy', output_path],
+                check=True, capture_output=True
+            )
+            os.remove(write_path)
+        except Exception as e:
+            print(f"[VideoProcess] Cảnh báo: Remux thất bại ({e}), giữ file AVI tại {write_path}")
+
     print(f"[VideoProcess] Hoàn tất xóa chữ động: {output_path}")
+
 
 if __name__ == "__main__":
     pass

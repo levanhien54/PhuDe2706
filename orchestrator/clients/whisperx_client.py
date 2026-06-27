@@ -14,7 +14,7 @@ class WhisperXClient(BaseClient):
         log.info("whisperx_transcribe_start", audio=audio_path)
         result = await self.post_file("/transcribe", audio_path)
         segments = [
-            SrtSegment(start=s["start"], end=s["end"], text=s["text"].strip())
+            SrtSegment(start=s["start"], end=s["end"], text=s["text"].strip(), speaker=s.get("speaker"))
             for s in result.get("segments", [])
             if s.get("text", "").strip()
         ]

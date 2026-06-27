@@ -20,7 +20,7 @@ async def run_translate(
     try:
         async with vram.slot("llm", _LLM_VRAM_GB):
             client = LLMClient(settings)
-            translated = await client.translate_batch(segments)
+            translated = await client.translate_batch(segments, target_lang=job.target_language)
         result = StageResult(
             stage="translate",
             success=True,

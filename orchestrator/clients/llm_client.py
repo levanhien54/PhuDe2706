@@ -7,7 +7,7 @@ from orchestrator.logger import get_logger
 log = get_logger(__name__)
 
 _TRANSLATE_PROMPT = (
-    "Dịch câu sau sang tiếng Việt một cách tự nhiên, giữ đúng ngữ cảnh. "
+    "Dịch câu sau sang {target_lang} một cách tự nhiên, giữ đúng ngữ cảnh. "
     "Chỉ trả về bản dịch, không giải thích:\n\n{text}"
 )
 
@@ -18,8 +18,8 @@ class LLMClient(BaseClient):
         super().__init__(base_url, settings)
         self.settings = settings
 
-    async def _translate_one(self, text: str) -> str:
-        prompt = _TRANSLATE_PROMPT.format(text=text)
+    async def _translate_one(self, text: str, target_lang: str) -> str:
+        prompt = _TRANSLATE_PROMPT.format(text=text, target_lang=target_lang)
         if self.settings.llm_backend == "vllm":
             payload = {
                 "model": self.settings.llm_model,
@@ -39,13 +39,13 @@ class LLMClient(BaseClient):
             return result.get("response", "").strip()
 
     async def translate_batch(
-        self, segments: list[SrtSegment], target_lang: str = "vi"
+        self, segments: list[SrtSegment], target_lang: str = "Tiếng Việt"
     ) -> list[SrtSegment]:
-        log.info("llm_translate_start", segment_count=len(segments), backend=self.settings.llm_backend)
-        tasks = [self._translate_one(s.text) for s in segments]
+        log.info("llm_translate_start", segment_count=len(segments), backend=self.settings.llm_backend, target_lang=target_lang)
+        tasks = [self._translate_one(s.text, target_lang) for s in segments]
         translations = await asyncio.gather(*tasks)
         result = []
         for seg, trans in zip(segments, translations):
-            result.append(SrtSegment(start=seg.start, end=seg.end, text=seg.text, translated=trans))
+            result.append(SrtSegment(start=seg.start, end=seg.end, text=seg.text, translated=trans, speaker=seg.speaker))
         log.info("llm_translate_done")
         return result

@@ -11,7 +11,7 @@ param(
     [switch]$SkipPull    = $false
 )
 
-$ErrorActionPreference = "Stop"
+# $ErrorActionPreference = "Stop"
 $ProjectRoot = $PSScriptRoot
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -31,7 +31,10 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 Write-OK "Docker found: $(docker --version)"
 
+$oldErr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $gpuCheck = docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi 2>&1
+$ErrorActionPreference = $oldErr
 if ($LASTEXITCODE -ne 0) {
     Write-Warn "GPU không khả dụng hoặc NVIDIA Container Toolkit chưa cài."
     Write-Warn "Hệ thống sẽ chạy bằng CPU (chậm hơn nhiều)."
@@ -103,7 +106,7 @@ Write-Host "  Khởi động Ollama container tạm..."
 docker compose up -d ollama
 Start-Sleep -Seconds 10
 
-# Chờ ollama healthy
+# Cho ollama healthy
 $tries = 0
 do {
     Start-Sleep -Seconds 5
@@ -113,7 +116,7 @@ do {
 } while ($health -ne "healthy" -and $tries -lt 12)
 
 if ($health -ne "healthy") {
-    Write-Warn "Ollama chưa healthy sau 60s — thử pull model trực tiếp..."
+    Write-Warn "Ollama chua healthy sau 60s - thu pull model truc tiep..."
 }
 
 docker exec ai_dubbing_ollama ollama pull $LlmModel
@@ -123,26 +126,22 @@ Write-OK "LLM model $LlmModel đã tải vào models/ollama/"
 # ------------------------------------------------------------------
 # 6. Tải Whisper model (large-v3 ~3GB)
 # ------------------------------------------------------------------
-Write-Step "Tải Whisper Large-v3 model (~3 GB)"
-
-Write-Host "  Khởi động WhisperX container tạm để pre-download model..."
-docker compose up -d whisperx
-Start-Sleep -Seconds 15
-
-# Gửi một request warm-up để trigger download
-$warmupBody = '{"audio_url":"http://example.com/test.wav"}'
-$tries = 0
-do {
-    Start-Sleep -Seconds 10
-    try {
-        $resp = Invoke-WebRequest -Uri "http://localhost:8001/health" -Method GET -TimeoutSec 5 -ErrorAction SilentlyContinue
-        if ($resp.StatusCode -eq 200) { break }
-    } catch {}
-    $tries++
-    Write-Host "  Chờ WhisperX... ($tries/18)"
-} while ($tries -lt 18)
-
-Write-OK "WhisperX sẵn sàng. Model Whisper đã được cache vào models/whisper/"
+# Write-Step "Tai Whisper Large-v3 model (~3 GB)"
+# Write-Host "  Khoi dong WhisperX container tam de pre-download model..."
+# docker compose up -d whisperx
+# Start-Sleep -Seconds 15
+# $warmupBody = '{"audio_url":"http://example.com/test.wav"}'
+# $tries = 0
+# do {
+#     Start-Sleep -Seconds 10
+#     try {
+#         $resp = Invoke-WebRequest -Uri "http://localhost:8001/health" -Method GET -TimeoutSec 5 -ErrorAction SilentlyContinue
+#         if ($resp.StatusCode -eq 200) { break }
+#     } catch {}
+#     $tries++
+#     Write-Host "  Cho WhisperX... ($tries/18)"
+# } while ($tries -lt 18)
+# Write-OK "WhisperX san sang. Model Whisper da duoc cache vao models/whisper/"
 
 # ------------------------------------------------------------------
 # 7. Tải Demucs model (tự động khi container khởi động)

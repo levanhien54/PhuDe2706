@@ -86,6 +86,11 @@ export default function PipelineProgress({ statusData }) {
                     Hoàn thành trong {stageResult.duration.toFixed(1)}s
                   </span>
                 )}
+                {stageResult && !stageResult.success && stageResult.error && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--error)', display: 'block', marginTop: '4px' }}>
+                    ✕ {stageResult.error}
+                  </span>
+                )}
               </div>
             </div>
           );

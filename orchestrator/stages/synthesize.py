@@ -1,3 +1,4 @@
+import asyncio
 import os, time
 import numpy as np
 import soundfile as sf
@@ -34,25 +35,42 @@ async def run_synthesize(
     try:
         async with vram.slot("tts", _TTS_VRAM_GB):
             client = TTSClient(settings)
-            for i, seg in enumerate(segments):
-                if not seg.translated:
-                    continue
-                seg_output = os.path.join(temp_dir, f"seg_{i:04d}.wav")
-                await client.synthesize(
-                    text=seg.translated,
-                    reference_audio=vocal_path,
-                    output_path=seg_output,
-                    target_duration=seg.duration,
-                )
-                stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
-                stretch_audio(seg_output, stretched_path, seg.duration)
+            sem = asyncio.Semaphore(8)
 
-                seg_data, _ = sf.read(stretched_path)
+            async def _synth_seg(i, seg):
+                if not seg.translated:
+                    return None
+                async with sem:
+                    seg_output = os.path.join(temp_dir, f"seg_{i:04d}.wav")
+                    await client.synthesize(
+                        text=seg.translated,
+                        reference_audio=vocal_path,
+                        output_path=seg_output,
+                        target_duration=seg.duration,
+                    )
+                    stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
+                    stretch_audio(seg_output, stretched_path, seg.duration)
+                    seg_data, _ = sf.read(stretched_path)
+                    return (i, seg, seg_data)
+
+            tasks = [_synth_seg(i, seg) for i, seg in enumerate(segments)]
+            results = await asyncio.gather(*tasks)
+
+            sorted_results = sorted(
+                (r for r in results if r is not None),
+                key=lambda x: x[0],
+            )
+
+            for _, seg, seg_data in sorted_results:
                 start_sample = int(seg.start * sr)
                 end_sample = start_sample + len(seg_data)
                 if end_sample > len(combined_audio):
                     combined_audio = np.pad(combined_audio, (0, end_sample - len(combined_audio)))
                 combined_audio[start_sample:end_sample] += seg_data
+
+        peak = np.max(np.abs(combined_audio))
+        if peak > 1.0:
+            combined_audio = combined_audio / peak
 
         sf.write(final_output, combined_audio, sr)
         return StageResult(

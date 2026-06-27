@@ -84,6 +84,24 @@ docker compose up
 ls data/output/
 ```
 
+> **Lưu ý build cục bộ:** `whisperx` và `tts` (GPT-SoVITS) **không có image sẵn trên Docker Hub** — chúng được build cục bộ từ `./whisperx-service/` và `./tts-service/` khi chạy `docker compose up` (compose tự build lần đầu). WhisperX là bắt buộc; GPT-SoVITS chỉ build khi bật profile `gpt_sovits`.
+
+### TTS bằng GPT-SoVITS thay vì OmniVoice
+
+Mặc định dùng OmniVoice. Để dùng GPT-SoVITS (cần đặt model vào `models/tts/`):
+
+```bash
+TTS_ENGINE=gpt_sovits docker compose --profile gpt_sovits up
+```
+
+### Phân tách người nói (speaker diarization) cho WhisperX
+
+Tùy chọn — cần HuggingFace token (pyannote). Không có token thì bỏ qua, mọi segment có `speaker=null`:
+
+```bash
+echo "HF_TOKEN=hf_xxxxx" >> .env
+```
+
 ### Với Lip-sync (LatentSync, cần build image trước)
 
 ```bash

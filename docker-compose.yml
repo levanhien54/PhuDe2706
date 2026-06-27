@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-gpu-resources: &gpu-resources
   deploy:
     resources:
@@ -76,19 +74,26 @@ services:
     <<: *gpu-resources
 
   whisperx:
-    image: ahmetkca/whisperx-api:latest
+    build:
+      context: ./whisperx-service
+    image: ai_dubbing_whisperx:local
     container_name: ai_dubbing_whisperx
     ports:
       - "8001:8000"
     volumes:
-      - ./models/whisper:/root/.cache/whisper
+      - ./models/whisper:/root/.cache
       - ./data/temp:/app/temp
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
+      - WHISPER_LANGUAGE=${WHISPER_LANGUAGE:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 90s
+      start_period: 120s
     <<: *gpu-resources
 
   demucs:
@@ -100,20 +105,30 @@ services:
     entrypoint: ["tail", "-f", "/dev/null"]
     <<: *gpu-resources
 
+  # GPT-SoVITS adapter — only needed when TTS_ENGINE=gpt_sovits (default is omnivoice).
+  # Built locally from the official repo; see tts-service/README.md.
   tts:
-    image: mikan/gpt-sovits-api:latest
+    build:
+      context: ./tts-service
+    image: ai_dubbing_tts:local
     container_name: ai_dubbing_tts
     ports:
       - "9880:9880"
     volumes:
-      - ./models/tts:/app/models
+      - ./models/tts:/app/GPT-SoVITS/GPT_SoVITS/pretrained_models
       - ./data/temp:/app/temp
+    environment:
+      - GPT_SOVITS_PROMPT_TEXT=${GPT_SOVITS_PROMPT_TEXT:-}
+      - GPT_SOVITS_PROMPT_LANG=${GPT_SOVITS_PROMPT_LANG:-auto}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9880/health"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 180s
+    profiles:
+      - gpt_sovits
     <<: *gpu-resources
 
   omnivoice:

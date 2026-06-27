@@ -5,6 +5,7 @@ import shutil
 import queue
 import threading as _threading
 import subprocess
+import tempfile
 import numpy as np
 from paddleocr import PaddleOCR
 
@@ -31,11 +32,6 @@ def _scale_frame_for_ocr(frame):
     scale = OCR_MAX_H / h
     small = cv2.resize(frame, (int(w * scale), OCR_MAX_H), interpolation=cv2.INTER_AREA)
     return small, scale
-
-def _scale_boxes_up(boxes, scale):
-    if scale == 1.0:
-        return boxes
-    return [(int(x/scale), int(y/scale), int(w/scale), int(h/scale)) for x, y, w, h in boxes]
 
 
 def _parse_ocr_boxes(result, scale, width, height):
@@ -171,77 +167,101 @@ def remove_watermark_from_video(input_path: str, output_path: str):
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     # --- Opt 6: FFV1 lossless codec ---
-    output_path_avi = output_path.replace('.mp4', '_raw.avi')
+    # Fix 3: Use os.path.splitext and a throwaway temp file for probe
+    base, _ = os.path.splitext(output_path)
+    output_path_avi = base + '_raw.avi'
+
     use_ffv1 = False
     try:
-        fourcc_ffv1 = cv2.VideoWriter_fourcc(*'FFV1')
-        test_writer = cv2.VideoWriter(output_path_avi, fourcc_ffv1, fps, (width, height))
-        if test_writer.isOpened():
-            use_ffv1 = True
-            test_writer.release()
-        else:
-            test_writer.release()
+        _probe_path = tempfile.mktemp(suffix='.avi')
+        _probe = cv2.VideoWriter(_probe_path, cv2.VideoWriter_fourcc(*'FFV1'), fps, (width, height))
+        use_ffv1 = _probe.isOpened()
+        _probe.release()
+        try:
+            os.remove(_probe_path)
+        except OSError:
+            pass
     except Exception:
         pass
 
     if use_ffv1:
         fourcc = cv2.VideoWriter_fourcc(*'FFV1')
+        fourcc_str = 'FFV1'
         write_path = output_path_avi
         print(f"[VideoProcess] Sử dụng codec FFV1 lossless → {write_path}")
     else:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc_str = 'mp4v'
         write_path = output_path
         print(f"[VideoProcess] FFV1 không khả dụng, fallback sang mp4v")
 
     out = cv2.VideoWriter(write_path, fourcc, fps, (width, height))
+    # Fix 4: Check VideoWriter opened successfully
+    if not out.isOpened():
+        cap.release()
+        raise RuntimeError(f"Failed to open VideoWriter at {write_path} with fourcc={fourcc_str}")
 
     ocr_fps = 2.0
-    frame_skip = max(1, int(fps / ocr_fps))
 
-    print(f"[VideoProcess] Tổng số frame: {total_frames}, Quét OCR mỗi {frame_skip} frames.")
+    print(f"[VideoProcess] Tổng số frame: {total_frames}, Quét OCR mỗi {max(1, int(fps / ocr_fps))} frames.")
 
     # --- Opt 5: Threading pipeline with queue ---
     QUEUE_SIZE = 8
     read_q = queue.Queue(maxsize=QUEUE_SIZE)
-    write_q = queue.Queue(maxsize=QUEUE_SIZE)
+    write_q = queue.Queue()  # Fix 1: unbounded — processor never blocks on put
     SENTINEL = object()  # signals end of stream
 
+    # Fix 2: Error queue for thread exception propagation
+    error_q = queue.Queue()
+
     def reader_thread():
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                read_q.put(SENTINEL)
-                break
-            read_q.put(frame)
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                read_q.put(frame)
+        except Exception as e:
+            error_q.put(e)
+        finally:
+            read_q.put(SENTINEL)
 
     def processor_thread():
-        cached = []
-        idx = 0
-        while True:
-            frame = read_q.get()
-            if frame is SENTINEL:
-                write_q.put(SENTINEL)
-                break
-            if idx % frame_skip == 0:
-                small, scale = _scale_frame_for_ocr(frame)
-                # Opt 7: lock OCR access
-                with _ocr_lock:
-                    result = ocr.ocr(small, cls=False)
-                cached = _parse_ocr_boxes(result, scale, width, height)
-            all_boxes = list(static_boxes) + cached
-            if all_boxes:
-                frame = apply_inpaint_to_frame(frame, all_boxes)
-            write_q.put(frame)
-            idx += 1
-            if idx % (int(fps) * 5) == 0:
-                print(f"[VideoProcess] Đã xử lý ~{idx}/{total_frames} frames...")
+        try:
+            frame_skip = max(1, int(fps / ocr_fps))
+            cached = []
+            idx = 0
+            while True:
+                frame = read_q.get()
+                if frame is SENTINEL:
+                    break
+                if idx % frame_skip == 0:
+                    small, scale = _scale_frame_for_ocr(frame)
+                    with _ocr_lock:
+                        result = ocr.ocr(small, cls=False)
+                    cached = _parse_ocr_boxes(result, scale, width, height)
+                all_boxes = list(static_boxes) + cached
+                if all_boxes:
+                    frame = apply_inpaint_to_frame(frame, all_boxes)
+                write_q.put(frame)
+                idx += 1
+                # Fix 7: suppress spurious frame=0 log line
+                if idx > 0 and idx % max(1, int(fps) * 5) == 0:
+                    print(f"[VideoProcess] Đã xử lý {idx}/{total_frames} frames...")
+        except Exception as e:
+            error_q.put(e)
+        finally:
+            write_q.put(SENTINEL)
 
     def writer_thread():
-        while True:
-            frame = write_q.get()
-            if frame is SENTINEL:
-                break
-            out.write(frame)
+        try:
+            while True:
+                frame = write_q.get()
+                if frame is SENTINEL:
+                    break
+                out.write(frame)
+        except Exception as e:
+            error_q.put(e)
 
     threads = [
         _threading.Thread(target=reader_thread, daemon=True),
@@ -253,20 +273,27 @@ def remove_watermark_from_video(input_path: str, output_path: str):
     for t in threads:
         t.join()
 
+    # Fix 2: Raise if any thread failed
+    if not error_q.empty():
+        cap.release()
+        out.release()
+        raise RuntimeError(f"Video processing thread error: {error_q.get()}")
+
     cap.release()
     out.release()
 
     # --- Opt 6: Remux with FFmpeg if we used FFV1 ---
     if use_ffv1:
+        print(f"[VideoProcess] Remux FFV1 → {output_path} (lossless copy)...")
+        # Fix 5: wrap subprocess + always clean up AVI
         try:
-            print(f"[VideoProcess] Remux FFV1 → {output_path} (lossless copy)...")
             subprocess.run(
-                ['ffmpeg', '-y', '-i', write_path, '-c:v', 'copy', output_path],
+                ['ffmpeg', '-y', '-i', output_path_avi, '-c:v', 'copy', output_path],
                 check=True, capture_output=True
             )
-            os.remove(write_path)
-        except Exception as e:
-            print(f"[VideoProcess] Cảnh báo: Remux thất bại ({e}), giữ file AVI tại {write_path}")
+        finally:
+            if os.path.exists(output_path_avi):
+                os.remove(output_path_avi)
 
     print(f"[VideoProcess] Hoàn tất xóa chữ động: {output_path}")
 

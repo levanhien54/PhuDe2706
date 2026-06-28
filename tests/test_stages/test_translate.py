@@ -29,14 +29,11 @@ async def test_run_translate_success(job):
     vram = VRAMManager(settings)
     segments = [
         SrtSegment(start=0.0, end=2.0, text="Hello world"),
-        SrtSegment(start=2.0, end=4.0, text="Good morning"),
+        SrtSegment(start=3.0, end=5.0, text="Good morning"),
     ]
     with respx.mock:
         respx.post("http://ollama-test:11434/api/generate").mock(
-            side_effect=[
-                httpx.Response(200, json={"response": "Xin chào thế giới"}),
-                httpx.Response(200, json={"response": "Chào buổi sáng"}),
-            ]
+            return_value=httpx.Response(200, json={"response": '[{"id": 0, "translated": "Xin chào thế giới"}, {"id": 1, "translated": "Chào buổi sáng"}]'})
         )
         result, translated = await run_translate(job, segments, settings, vram)
     assert result.success is True

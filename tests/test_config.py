@@ -6,7 +6,7 @@ def test_default_settings():
     s = Settings()
     assert s.tts_engine == "omnivoice"
     assert s.vram_profile == "16gb"
-    assert s.ollama_host == "http://ollama:11434"
+    assert s.ollama_host == "http://127.0.0.1:11434"
     assert s.llm_model == "qwen2.5:14b"
 
 

@@ -1,6 +1,6 @@
 # Video Dubbing & Dịch thuật Tự động
 
-Hệ thống dubbing video **100% offline** — tách âm, nhận diện giọng, dịch thuật LLM, clone giọng, đồng bộ khẩu hình, xuất video — tối ưu cho GPU 16–24 GB VRAM.
+Hệ thống dubbing video **100% offline** — tách âm, nhận diện giọng, dịch thuật LLM, clone giọng, đồng bộ khẩu hình, xuất video — tối ưu cho GPU 16–24 GB VRAM chạy hoàn toàn bằng Python Native (không sử dụng Docker).
 
 ---
 
@@ -11,121 +11,89 @@ Hệ thống dubbing video **100% offline** — tách âm, nhận diện giọng
 | GPU | NVIDIA 16 GB VRAM (RTX 4080) | 24 GB (RTX 3090/4090) |
 | RAM | 32 GB | 64 GB |
 | Ổ cứng | 50 GB trống | 100 GB SSD |
-| OS | Windows 10/11 hoặc Ubuntu 22.04 | Ubuntu 22.04 |
-| Docker | Docker Desktop 4.x + GPU support | — |
+| OS | Windows 10/11 hoặc Ubuntu 22.04 | Windows 11 / Ubuntu 22.04 |
+| Môi trường | Python 3.10+, Node.js, FFmpeg | — |
 
 ---
 
-## Triển khai lần đầu (máy mới)
+## Triển khai (máy mới)
 
 ### Windows
 
-```powershell
-# Tải toàn bộ models (~20 GB) và cấu hình tự động
-.\setup.ps1
+Mở **PowerShell** (có quyền Administrator nếu cần) và chạy:
 
-# Tùy chọn:
-.\setup.ps1 -LlmModel "qwen2.5:14b" -VramProfile "16gb"
-.\setup.ps1 -LlmModel "gemma2:27b"  -VramProfile "24gb" -WithLipsync
+```powershell
+# Tải toàn bộ models, tạo Python venv và cài thư viện (~15-20 GB)
+.\setup_native.ps1
 ```
 
 ### Linux / macOS
 
-```bash
-bash setup.sh
+Mở **Terminal** và chạy:
 
-# Tùy chọn:
-bash setup.sh --llm-model qwen2.5:14b --vram 16gb
-bash setup.sh --llm-model gemma2:27b  --vram 24gb --with-lipsync
+```bash
+chmod +x setup_native.sh run_native.sh
+./setup_native.sh
 ```
 
 Script sẽ tự động:
-1. Kiểm tra Docker + NVIDIA GPU
-2. Tạo `.env` từ mẫu
-3. Pull tất cả Docker images
-4. Tải LLM model vào `models/ollama/`
-5. Tải Whisper Large-v3 vào `models/whisper/`
-6. Tải Demucs htdemucs vào `models/demucs/`
-7. Tải OmniVoice vào `models/omnivoice/`
+1. Kiểm tra Python, Node.js, FFmpeg.
+2. Tạo Python Virtual Environment (`venv`) chung để tối ưu không gian đĩa.
+3. Cài đặt PyTorch với CUDA.
+4. Cài đặt thư viện Backend (WhisperX, TTS, Demucs) và Frontend (npm install).
+5. Tải mô hình Demucs.
 
----
-
-## Chuyển máy / Backup models
-
-Để chuyển sang máy khác **không cần tải lại**:
-
-```
-# Copy toàn bộ thư mục models/ sang máy mới
-rsync -av --progress models/ user@new-machine:/path/to/project/models/
-
-# Hoặc nén lại
-tar -czf models-backup.tar.gz models/
-```
-
-Trên máy mới, chỉ cần chạy:
-```bash
-# Bỏ qua bước pull models (đã có sẵn)
-bash setup.sh --skip-pull
-docker compose up
-```
+*Lưu ý:* Để chạy LLM nội bộ, bạn cần tải và cài đặt phần mềm [Ollama](https://ollama.com/) trực tiếp trên máy host và tải mô hình tương ứng (ví dụ: `ollama run qwen2.5:14b`).
 
 ---
 
 ## Chạy hệ thống
 
-```bash
-# 1. Bỏ video .mp4 vào thư mục input
-cp my_video.mp4 data/input/
+Hệ thống sử dụng các script tiện ích để khởi động tất cả dịch vụ trong background.
 
-# 2. Khởi động hệ thống
-docker compose up
-
-# 3. Xem kết quả
-ls data/output/
+### Trên Windows
+```powershell
+.\run_native.ps1
 ```
 
-> **Lưu ý build cục bộ:** `whisperx` và `tts` (GPT-SoVITS) **không có image sẵn trên Docker Hub** — chúng được build cục bộ từ `./whisperx-service/` và `./tts-service/` khi chạy `docker compose up` (compose tự build lần đầu). WhisperX là bắt buộc; GPT-SoVITS chỉ build khi bật profile `gpt_sovits`.
-
-### TTS bằng GPT-SoVITS thay vì OmniVoice
-
-Mặc định dùng OmniVoice. Để dùng GPT-SoVITS (cần đặt model vào `models/tts/`):
-
+### Trên Linux / macOS
 ```bash
-TTS_ENGINE=gpt_sovits docker compose --profile gpt_sovits up
+./run_native.sh
 ```
 
-### Phân tách người nói (speaker diarization) cho WhisperX
-
-Tùy chọn — cần HuggingFace token (pyannote). Không có token thì bỏ qua, mọi segment có `speaker=null`:
-
-```bash
-echo "HF_TOKEN=hf_xxxxx" >> .env
-```
-
-### Với Lip-sync (LatentSync, cần build image trước)
-
-```bash
-# Build LatentSync image
-docker build -t lipsync-api:latest ./lipsync-service/
-
-# Chạy với lip-sync
-ENABLE_LIPSYNC=true docker compose --profile lipsync up
-```
+Sau khi khởi chạy:
+- Bỏ video `.mp4` vào thư mục `data/input/`
+- Truy cập giao diện tại: **http://localhost:5173**
+- Xem kết quả tại thư mục `data/output/`
 
 ---
 
-## Cấu hình qua biến môi trường
+## Triển khai Offline Siêu Tốc (Cho máy chủ không có Internet)
 
-Chỉnh file `.env`:
+Nếu bạn cần đem bộ mã nguồn này triển khai trên một máy chủ (server) mới, mạng chậm hoặc bị tường lửa chặn, hãy dùng phương pháp Đóng gói Offline:
 
-| Biến | Mặc định | Mô tả |
-|---|---|---|
-| `TTS_ENGINE` | `omnivoice` | `omnivoice` hoặc `gpt_sovits` |
-| `LLM_BACKEND` | `ollama` | `ollama` hoặc `vllm` |
-| `LLM_MODEL` | `qwen2.5:14b` | Tên model Ollama |
-| `VRAM_PROFILE` | `16gb` | `16gb` hoặc `24gb` |
-| `ENABLE_LIPSYNC` | `false` | `true` để bật LatentSync |
-| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` |
+### Bước 1: Đóng gói trên máy đã cài đặt thành công
+Trên máy tính hiện tại đã chạy ngon lành, mở PowerShell và chạy:
+```powershell
+.\pack_offline_bundle.ps1
+```
+*(Đối với Linux: `./pack_offline_bundle.sh`)*
+
+Hệ thống sẽ tải toàn bộ các gói thư viện Python (bao gồm PyTorch 2.5GB) lưu vào thư mục `offline_wheels/`.
+
+### Bước 2: Nén và Copy
+- Nén toàn bộ thư mục `PhuDe27.06` thành một file `.zip`.
+- **Lưu ý BỎ QUA:** Không nén thư mục `venv/` (vì khác máy sẽ bị lỗi đường dẫn), `data/input/`, `data/output/`.
+- Copy file `.zip` này sang máy chủ mới và giải nén.
+
+### Bước 3: Cài đặt siêu tốc trên máy chủ mới
+Mở PowerShell tại máy chủ mới và chạy:
+```powershell
+.\setup_offline.ps1
+```
+*(Đối với Linux: `./setup_offline.sh`)*
+
+Quá trình này sẽ sử dụng các tệp tin có sẵn trong `offline_wheels/` để cài đặt ngay lập tức (chỉ mất ~1-2 phút) mà không cần tải bất cứ thứ gì từ Internet.
 
 ---
 
@@ -138,16 +106,16 @@ PhuDe27.06/
 │   ├── output/      ← Video đã dub xuất ra đây
 │   └── temp/        ← File tạm (tự xóa sau khi xong)
 ├── models/
-│   ├── ollama/      ← LLM weights (qwen2.5, gemma2...)
+│   ├── ollama/      ← LLM weights (tự động qua phần mềm Ollama host)
 │   ├── whisper/     ← Whisper Large-v3
 │   ├── demucs/      ← Demucs htdemucs
 │   ├── tts/         ← GPT-SoVITS models
 │   ├── omnivoice/   ← OmniVoice models
 │   └── lipsync/     ← LatentSync models
 ├── orchestrator/    ← Pipeline code
-├── docker-compose.yml
-├── setup.ps1        ← Windows setup
-└── setup.sh         ← Linux/macOS setup
+├── frontend/        ← Code UI
+├── setup_native.ps1 ← Windows setup script
+└── run_native.ps1   ← Windows run script
 ```
 
 ---
@@ -156,11 +124,11 @@ PhuDe27.06/
 
 ```
 VIDEO GỐC
-  ├── [M2] Demucs     → tách vocal + nhạc nền
+  ├── [M2] Demucs     → tách vocal + nhạc nền (Chạy Local Subprocess)
   ├── [M7] PaddleOCR  → phát hiện + xóa chữ (Gaussian Blur)
-  ├── [M3] WhisperX   → STT + word-level timestamps
-  ├── [M4] LLM        → dịch thuật tiếng Việt (Qwen / Gemma)
-  ├── [M5] OmniVoice  → clone giọng, sinh audio tiếng Việt
+  ├── [M3] WhisperX   → STT + word-level timestamps (FastAPI Local)
+  ├── [M4] LLM        → dịch thuật tiếng Việt (Ollama Host)
+  ├── [M5] GPT-SoVITS → clone giọng, sinh audio tiếng Việt
   ├── [M6] Rubberband → stretch audio khớp timestamps
   ├── [M9] LatentSync → đồng bộ khẩu hình (tùy chọn)
   └── [M10] FFmpeg    → mux audio + video → VIDEO THÀNH PHẨM
@@ -168,27 +136,29 @@ VIDEO GỐC
 
 ---
 
+## Cấu hình Nâng cao (.env)
+
+Hệ thống cho phép tinh chỉnh qua file `.env`. Dưới đây là một số biến quan trọng:
+
+| Biến | Mặc định | Mô tả |
+|---|---|---|
+| `TTS_ENGINE` | `gpt_sovits` | `omnivoice` hoặc `gpt_sovits` |
+| `LLM_BACKEND` | `ollama` | `ollama` hoặc `vllm`. *Khuyến cáo: vLLM tối ưu nhất cho Linux.* |
+| `LLM_MODEL` | `qwen2.5:14b` | Tên model Ollama hoặc HuggingFace (nếu dùng vllm) |
+| `VRAM_PROFILE` | `16gb` | `16gb` hoặc `24gb` để điều chỉnh ngưỡng bộ nhớ |
+| `ENABLE_LIPSYNC` | `false` | Bật/tắt đồng bộ môi (LatentSync) |
+| `ENABLE_PROPAINTER` | `false` | Bật/tắt xoá chữ bằng Deep Learning (chất lượng cao nhưng chậm) |
+| `ENABLE_CPU_OFFLOAD` | `false` | Bật/tắt offload weights CPU (NEO) để giảm tải VRAM |
+| `ENABLE_KVCACHED` | `false` | Bật/tắt KV Cache linh hoạt cho môi trường nghẽn VRAM |
+| `LOG_LEVEL` | `INFO` | Mức độ log (`DEBUG` / `INFO`) |
+
+---
+
 ## Khắc phục lỗi thường gặp
 
 **Lỗi CUDA out of memory:**
-```bash
-# Chỉnh VRAM profile xuống
-echo "VRAM_PROFILE=16gb" >> .env
-docker compose restart orchestrator
-```
+- Nếu bạn có GPU 16GB, cần đảm bảo chỉnh cấu hình trong `.env`:
+  `VRAM_PROFILE=16gb`
 
-**Service không healthy sau 2 phút:**
-```bash
-docker compose logs whisperx   # xem log
-docker compose restart whisperx
-```
-
-**Ollama không tải được model:**
-```bash
-docker exec ai_dubbing_ollama ollama pull qwen2.5:14b
-```
-
-**Xem log pipeline:**
-```bash
-docker compose logs -f orchestrator
-```
+**Thay đổi Port/API:**
+- Các cấu hình API được định tuyến qua `orchestrator/config.py` và sử dụng `http://127.0.0.1:xxx` thay vì Docker DNS. Bạn có thể thay đổi cổng trong file `run_native` nếu bị xung đột.

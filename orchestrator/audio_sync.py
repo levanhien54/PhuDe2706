@@ -1,11 +1,12 @@
 import os
 import soundfile as sf
-import pyrubberband as pyrb
 import subprocess
+import numpy as np
 
 def stretch_audio(input_path: str, output_path: str, target_duration: float):
     """
-    Kéo dãn hoặc nén file âm thanh để đạt được target_duration bằng pyrubberband (thuật toán bảo toàn pitch).
+    Kéo dãn hoặc nén file âm thanh để đạt được target_duration bằng Pedalboard (chứa lõi thuật toán C++ của Rubberband).
+    Chất lượng cao, không bị méo tiếng như librosa, và không phụ thuộc vào ứng dụng ngoài.
     """
     print(f"[AudioSync] Xử lý file {input_path} -> target: {target_duration}s")
     
@@ -43,8 +44,20 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float):
     
     print(f" - Original duration: {current_duration:.2f}s, Rate: {rate:.4f}")
     
-    # Dùng pyrubberband để stretch (bảo toàn cao độ tốt hơn librosa.effects.time_stretch)
-    y_stretched = pyrb.time_stretch(y, sr, rate)
+    # Pedalboard đòi hỏi mảng đầu vào có dạng (channels, samples)
+    y_2d = y.reshape(1, -1)
+    
+    try:
+        import pedalboard
+        print(f"[AudioSync] Using Pedalboard (Rubberband Phase-Vocoder) for high-quality time stretching...")
+        # time_stretch tự động điều chỉnh tốc độ, giữ nguyên cao độ (pitch)
+        y_stretched_2d = pedalboard.time_stretch(y_2d, sr, rate)
+        y_stretched = y_stretched_2d[0] # Chuyển lại thành (samples,)
+        print(f"[AudioSync] Phase-Vocoder applied successfully. Preserved pitch and formants.")
+    except ImportError:
+        print("[AudioSync] CẢNH BÁO: Thư viện pedalboard chưa được cài đặt, fallback về librosa (chất lượng kém hơn)...")
+        import librosa
+        y_stretched = librosa.effects.time_stretch(y, rate=rate)
     
     # Ghi ra file
     sf.write(output_path, y_stretched, sr)

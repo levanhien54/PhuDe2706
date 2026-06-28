@@ -5,13 +5,13 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Service endpoints
-    ollama_host: str = Field("http://ollama:11434", validation_alias="OLLAMA_HOST")
-    vllm_host: str = Field("http://vllm:8080", validation_alias="VLLM_HOST")
-    whisperx_api: str = Field("http://whisperx:8000", validation_alias="WHISPERX_API")
-    demucs_api: str = Field("http://demucs:8000", validation_alias="DEMUCS_API")
-    tts_api: str = Field("http://tts:9880", validation_alias="TTS_API")
-    omnivoice_api: str = Field("http://omnivoice:3900", validation_alias="OMNIVOICE_API")
-    lipsync_api: str = Field("http://lipsync:8010", validation_alias="LIPSYNC_API")
+    ollama_host: str = Field("http://127.0.0.1:11434", validation_alias="OLLAMA_HOST")
+    vllm_host: str = Field("http://127.0.0.1:8080", validation_alias="VLLM_HOST")
+    whisperx_api: str = Field("http://127.0.0.1:8001", validation_alias="WHISPERX_API")
+    demucs_api: str = Field("local", validation_alias="DEMUCS_API")
+    tts_api: str = Field("http://127.0.0.1:9880", validation_alias="TTS_API")
+    omnivoice_api: str = Field("http://127.0.0.1:3900", validation_alias="OMNIVOICE_API")
+    lipsync_api: str = Field("http://127.0.0.1:8010", validation_alias="LIPSYNC_API")
 
     # Engine selection
     tts_engine: str = Field("omnivoice", validation_alias="TTS_ENGINE")
@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     llm_model: str = Field("qwen2.5:14b", validation_alias="LLM_MODEL")
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")
     enable_lipsync: bool = Field(False, validation_alias="ENABLE_LIPSYNC")
+    enable_propainter: bool = Field(False, validation_alias="ENABLE_PROPAINTER")
+    enable_cpu_offload: bool = Field(False, validation_alias="ENABLE_CPU_OFFLOAD")
+    enable_kvcached: bool = Field(False, validation_alias="ENABLE_KVCACHED")
 
     # Paths
     data_dir: str = Field("/app/data", validation_alias="DATA_DIR")
@@ -33,6 +36,7 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "populate_by_name": True,
+        "extra": "ignore",
     }
 
 

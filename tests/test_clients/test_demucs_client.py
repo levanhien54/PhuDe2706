@@ -20,6 +20,7 @@ def tmp_video(tmp_path):
 @pytest.mark.asyncio
 async def test_separate_returns_paths(settings, tmp_video, tmp_path):
     with respx.mock:
+        respx.get("http://demucs-test:8000/health").mock(return_value=httpx.Response(200))
         respx.post("http://demucs-test:8000/separate").mock(
             return_value=httpx.Response(200, json={
                 "vocal": "/data/temp/test_vocal.wav",

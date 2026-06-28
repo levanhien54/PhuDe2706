@@ -56,7 +56,7 @@ async def test_run_synthesize_success(job, settings, setup_temp):
     ]
     vram = VRAMManager(settings)
 
-    def fake_synthesize_side_effect(text, reference_audio, output_path, target_duration):
+    def fake_synthesize_side_effect(text, reference_audio, output_path, target_duration, language=None):
         data = np.zeros(int(sr * target_duration), dtype=np.float32)
         sf.write(output_path, data, sr)
         return output_path

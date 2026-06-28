@@ -111,8 +111,8 @@ def _detect_static_boxes(cap, ocr, fps, width, height):
 
 
 # --- Opt 4: cv2.inpaint instead of GaussianBlur ---
-def apply_inpaint_to_frame(frame, boxes):
-    """Inpaint text regions using TELEA algorithm for cleaner results."""
+def apply_inpaint_to_frame(frame, boxes, mask_only=False):
+    """Inpaint text regions using TELEA algorithm for cleaner results, or return mask."""
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     for (x, y, w, h) in boxes:
         # expand mask slightly for better inpainting
@@ -122,12 +122,16 @@ def apply_inpaint_to_frame(frame, boxes):
         x2 = min(frame.shape[1], x + w + pad)
         y2 = min(frame.shape[0], y + h + pad)
         mask[y1:y2, x1:x2] = 255
+        
+    if mask_only:
+        return cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        
     if mask.max() == 0:
         return frame
     return cv2.inpaint(frame, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
 
 
-def remove_watermark_from_video(input_path: str, output_path: str):
+def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bool = False):
     """
     Tự động phát hiện và xóa toàn bộ chữ động trong video.
     Quét OCR 2 lần mỗi giây (detection-only), inpaint các vùng phát hiện.
@@ -241,8 +245,8 @@ def remove_watermark_from_video(input_path: str, output_path: str):
                         result = ocr.ocr(small, cls=False)
                     cached = _parse_ocr_boxes(result, scale, width, height)
                 all_boxes = list(static_boxes) + cached
-                if all_boxes:
-                    frame = apply_inpaint_to_frame(frame, all_boxes)
+                if all_boxes or mask_only:
+                    frame = apply_inpaint_to_frame(frame, all_boxes, mask_only)
                 write_q.put(frame)
                 idx += 1
                 # Fix 7: suppress spurious frame=0 log line

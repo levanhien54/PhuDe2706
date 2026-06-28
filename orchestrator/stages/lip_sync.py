@@ -2,7 +2,7 @@ import os, time
 from orchestrator.models import PipelineJob, StageResult
 from orchestrator.config import Settings
 from orchestrator.vram_manager import VRAMManager
-from orchestrator.clients.lipsync_client import LipSyncClient
+from orchestrator.stages.latentsync_client import run_latentsync_inference
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
@@ -21,8 +21,7 @@ async def run_lip_sync(
 
     try:
         async with vram.slot("lipsync", _LIPSYNC_VRAM_GB):
-            client = LipSyncClient(settings)
-            await client.sync(cleaned_video, new_vocal, output_video)
+            await run_latentsync_inference(cleaned_video, new_vocal, output_video, settings)
         return StageResult(
             stage="lip_sync",
             success=True,

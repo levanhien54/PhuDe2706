@@ -3,6 +3,7 @@ from orchestrator.models import PipelineJob, StageResult
 from orchestrator.config import Settings
 from orchestrator.vram_manager import VRAMManager
 from orchestrator.video_process import remove_watermark_from_video
+from orchestrator.stages.propainter_client import run_propainter_inference
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
@@ -21,7 +22,21 @@ async def run_video_ocr(
 
     try:
         async with vram.slot("paddleocr", _OCR_VRAM_GB):
-            await asyncio.to_thread(remove_watermark_from_video, input_video, output_video)
+            if settings.enable_propainter:
+                mask_video = os.path.join(temp_dir, "mask.mp4")
+                # Generate mask only
+                await asyncio.to_thread(remove_watermark_from_video, input_video, mask_video, True)
+                
+                # Release paddleocr before running propainter to save VRAM
+            else:
+                await asyncio.to_thread(remove_watermark_from_video, input_video, output_video, False)
+
+        if settings.enable_propainter:
+            propainter_dir = os.path.join(os.path.dirname(settings.data_dir), "models", "propainter")
+            async with vram.slot("propainter", 8.0):
+                success = await run_propainter_inference(input_video, mask_video, output_video, propainter_dir)
+                if not success:
+                    raise Exception("ProPainter inference failed")
         return StageResult(
             stage="video_ocr",
             success=True,

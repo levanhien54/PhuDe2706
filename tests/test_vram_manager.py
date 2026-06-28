@@ -6,12 +6,12 @@ from orchestrator.config import Settings
 
 @pytest.fixture
 def mgr_16():
-    return VRAMManager(Settings(vram_profile="16gb"))
+    return VRAMManager(Settings(vram_profile="16gb", _env_file=None))
 
 
 @pytest.fixture
 def mgr_24():
-    return VRAMManager(Settings(vram_profile="24gb"))
+    return VRAMManager(Settings(vram_profile="24gb", _env_file=None))
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from orchestrator.pipeline import run_pipeline
+from unittest.mock import AsyncMock, patch
+from orchestrator.pipeline import run_pipeline_phase1, run_pipeline_phase2
 from orchestrator.models import PipelineJob, StageResult, SrtSegment
 from orchestrator.config import Settings
 from datetime import datetime
@@ -33,10 +33,11 @@ async def test_pipeline_16gb_stage_order(job):
         patch("orchestrator.pipeline.run_synthesize", new_callable=AsyncMock, return_value=ok),
         patch("orchestrator.pipeline.mix_audio_to_video"),
     ):
-        results = await run_pipeline(job, settings)
+        results_phase1, translated_segments = await run_pipeline_phase1(job, settings)
+        results_phase2 = await run_pipeline_phase2(job, translated_segments, settings)
 
-    assert results["audio_separate"].success
-    assert results["transcribe"].success
-    assert results["translate"].success
-    assert results["synthesize"].success
-    assert "lip_sync" not in results  # ENABLE_LIPSYNC=False
+    assert results_phase1["audio_separate"].success
+    assert results_phase1["transcribe"].success
+    assert results_phase1["translate"].success
+    assert results_phase2["synthesize"].success
+    assert "lip_sync" not in results_phase2  # ENABLE_LIPSYNC=False

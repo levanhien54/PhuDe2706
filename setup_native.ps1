@@ -158,9 +158,9 @@ if not os.path.exists(os.path.join(target_dir, 'latentsync_unet.pt')):
 & $PythonExe -c $hf_script
 Write-OK "Đã kiểm tra weights LatentSync."
 
-Write-Host "Kích hoạt tải trước mô hình htdemucs..."
-& $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs')"
-Write-OK "Đã tải htdemucs."
+Write-Host "Kích hoạt tải trước mô hình htdemucs_ft..."
+& $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft')"
+Write-OK "Đã tải htdemucs_ft."
 
 if (-not (Test-Path "$ProjectRoot\.env")) {
     Copy-Item "$ProjectRoot\orchestrator\.env.example" "$ProjectRoot\.env"

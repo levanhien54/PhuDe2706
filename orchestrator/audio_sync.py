@@ -50,10 +50,20 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float):
     try:
         import pedalboard
         print(f"[AudioSync] Using Pedalboard (Rubberband Phase-Vocoder) for high-quality time stretching...")
-        # time_stretch tự động điều chỉnh tốc độ, giữ nguyên cao độ (pitch)
+        
+        # 1. Kéo dãn thời gian (Phase Vocoder)
         y_stretched_2d = pedalboard.time_stretch(y_2d, sr, rate)
+        
+        # 2. Vocal Mastering Chain (Làm rõ giọng, nén âm lượng, chống rè)
+        board = pedalboard.Pedalboard([
+            pedalboard.HighpassFilter(cutoff_frequency_hz=80),  # Cắt tiếng lụp bụp ở dải trầm
+            pedalboard.Compressor(threshold_db=-15, ratio=3.0, attack_ms=5.0, release_ms=50.0), # Làm đều âm lượng giọng
+            pedalboard.Limiter(threshold_db=-1.5) # Chống rè (clipping)
+        ])
+        y_stretched_2d = board(y_stretched_2d, sr)
+        
         y_stretched = y_stretched_2d[0] # Chuyển lại thành (samples,)
-        print(f"[AudioSync] Phase-Vocoder applied successfully. Preserved pitch and formants.")
+        print(f"[AudioSync] Phase-Vocoder & Vocal Mastering applied successfully.")
     except ImportError:
         print("[AudioSync] CẢNH BÁO: Thư viện pedalboard chưa được cài đặt, fallback về librosa (chất lượng kém hơn)...")
         import librosa
@@ -70,22 +80,25 @@ def mix_audio_to_video(video_path: str, new_vocal_path: str, background_path: st
     print(f"[FFmpeg] Đang mix và render video cuối cùng...")
     
     # Lệnh FFmpeg:
-    # 1. Nhận video gốc (-i video)
-    # 2. Nhận vocal mới (-i vocal)
-    # 3. Nhận nhạc nền (-i bg)
-    # 4. Filter_complex: mix 2 audio stream lại (amix)
-    # 5. Map: lấy hình ảnh từ video gốc (0:v), âm thanh từ kết quả mix
-    # 6. Mã hóa: copy hình ảnh, aac cho âm thanh
+    # - afftdn: Khử nhiễu tĩnh điện từ quá trình AI TTS
+    # - acompressor: Cân bằng giọng nói
+    # - sidechaincompress (bg_ducking): threshold=-18dB, ratio=4 để nhạc nền lùi tự nhiên
+    # - loudnorm (chuẩn Web): I=-14 LUFS (YouTube/Tiktok standard) thay vì -23 LUFS (TV cũ)
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
         "-i", new_vocal_path,
         "-i", background_path,
-        "-filter_complex", "[2:a]aformat=channel_layouts=stereo[bg];[1:a]loudnorm=I=-23:LRA=7:TP=-2,aformat=channel_layouts=stereo[voc];[bg][voc]sidechaincompress=threshold=0.05:ratio=4:attack=5:release=50[bg_ducked];[voc][bg_ducked]amix=inputs=2:duration=longest[a]",
+        "-filter_complex", 
+        "[2:a]aformat=channel_layouts=stereo[bg];"
+        "[1:a]afftdn=nf=-20,highpass=f=80,acompressor=threshold=-15dB:ratio=3:attack=5:release=50,loudnorm=I=-14:LRA=7:TP=-1.5,aformat=channel_layouts=stereo[voc];"
+        "[bg][voc]sidechaincompress=threshold=0.063:ratio=4:attack=5:release=100[bg_ducked];" # 0.063 amplitude ~ -24dB
+        "[voc][bg_ducked]amix=inputs=2:duration=longest,loudnorm=I=-14:LRA=11:TP=-1.5[a]",
         "-map", "0:v",
         "-map", "[a]",
         "-c:v", "copy",
         "-c:a", "aac",
+        "-b:a", "192k",
         output_video_path
     ]
     

@@ -23,7 +23,7 @@ def get_ocr_instance():
 
 
 # --- Opt 2: Downscale frame for OCR, scale boxes back ---
-OCR_MAX_H = 720
+OCR_MAX_H = 480
 
 def _scale_frame_for_ocr(frame):
     h, w = frame.shape[:2]
@@ -112,7 +112,7 @@ def _detect_static_boxes(cap, ocr, fps, width, height):
 
 # --- Opt 4: cv2.inpaint instead of GaussianBlur ---
 def apply_inpaint_to_frame(frame, boxes, mask_only=False):
-    """Inpaint text regions using TELEA algorithm for cleaner results, or return mask."""
+    """Inpaint text regions using TELEA algorithm on localized crops for massive speedup, or return mask."""
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     for (x, y, w, h) in boxes:
         # expand mask slightly for better inpainting
@@ -128,7 +128,26 @@ def apply_inpaint_to_frame(frame, boxes, mask_only=False):
         
     if mask.max() == 0:
         return frame
-    return cv2.inpaint(frame, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+        
+    # OPTIMIZATION: Crop-based inpainting
+    # Instead of full-frame inpaint, only inpaint the bounding boxes of the mask.
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    res = frame.copy()
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        # expand crop by 10px context to give the algorithm surrounding pixels to sample
+        cx1 = max(0, x - 10)
+        cy1 = max(0, y - 10)
+        cx2 = min(frame.shape[1], x + w + 10)
+        cy2 = min(frame.shape[0], y + h + 10)
+        
+        crop_frame = res[cy1:cy2, cx1:cx2]
+        crop_mask = mask[cy1:cy2, cx1:cx2]
+        
+        inpainted_crop = cv2.inpaint(crop_frame, crop_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+        res[cy1:cy2, cx1:cx2] = inpainted_crop
+        
+    return res
 
 
 def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bool = False):
@@ -220,10 +239,11 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
 
     print(f"[VideoProcess] Tổng số frame: {total_frames}, Quét OCR mỗi {max(1, int(fps / ocr_fps))} frames.")
 
-    # --- Opt 5: Threading pipeline with queue ---
-    QUEUE_SIZE = 8
+    # --- Opt 5: Threading pipeline with dual queues ---
+    QUEUE_SIZE = 16
     read_q = queue.Queue(maxsize=QUEUE_SIZE)
-    write_q = queue.Queue()  # Fix 1: unbounded — processor never blocks on put
+    ocr_q = queue.Queue(maxsize=QUEUE_SIZE)
+    write_q = queue.Queue()  
     SENTINEL = object()  # signals end of stream
 
     # Fix 2: Error queue for thread exception propagation
@@ -241,7 +261,7 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
         finally:
             read_q.put(SENTINEL)
 
-    def processor_thread():
+    def ocr_thread():
         try:
             frame_skip = max(1, int(fps / ocr_fps))
             cached = []
@@ -255,12 +275,27 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
                     with _ocr_lock:
                         result = ocr.ocr(small, cls=False)
                     cached = _parse_ocr_boxes(result, scale, width, height)
+                
+                # Forward frame + detected dynamic boxes to the inpaint thread
+                ocr_q.put((frame, cached, idx))
+                idx += 1
+        except Exception as e:
+            error_q.put(e)
+        finally:
+            ocr_q.put(SENTINEL)
+
+    def inpaint_thread():
+        try:
+            while True:
+                item = ocr_q.get()
+                if item is SENTINEL:
+                    break
+                frame, cached, idx = item
                 all_boxes = list(static_boxes) + cached
                 if all_boxes or mask_only:
                     frame = apply_inpaint_to_frame(frame, all_boxes, mask_only)
                 write_q.put(frame)
-                idx += 1
-                # Fix 7: suppress spurious frame=0 log line
+                
                 if idx > 0 and idx % max(1, int(fps) * 5) == 0:
                     print(f"[VideoProcess] Đã xử lý {idx}/{total_frames} frames...")
         except Exception as e:
@@ -280,7 +315,8 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
 
     threads = [
         _threading.Thread(target=reader_thread, daemon=True),
-        _threading.Thread(target=processor_thread, daemon=True),
+        _threading.Thread(target=ocr_thread, daemon=True),
+        _threading.Thread(target=inpaint_thread, daemon=True),
         _threading.Thread(target=writer_thread, daemon=True),
     ]
     for t in threads:

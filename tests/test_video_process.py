@@ -67,3 +67,50 @@ def test_build_temporal_reference_invalid_path():
         result = build_temporal_reference('/nonexistent/path.avi', n_samples=5)
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# apply_temporal_inpaint
+# ---------------------------------------------------------------------------
+
+def test_apply_temporal_inpaint_static_copies_from_reference():
+    """Static box must be filled from reference pixels."""
+    import orchestrator.video_process as vp
+    from orchestrator.video_process import apply_temporal_inpaint
+
+    frame = np.zeros((60, 60, 3), dtype=np.uint8)
+    frame[10:20, 10:30] = 255  # watermark
+    reference = np.full((60, 60, 3), 100, dtype=np.uint8)
+
+    # No cv2 calls needed for static-only path (just numpy)
+    result = apply_temporal_inpaint(frame, reference, static_boxes=[(10, 10, 20, 10)], dynamic_boxes=[])
+    assert np.all(result[10:20, 10:30] == 100)
+    assert np.all(result[0:10, :] == 0)
+
+
+def test_apply_temporal_inpaint_no_boxes_returns_copy():
+    """No boxes → returns copy of frame (not same object)."""
+    from orchestrator.video_process import apply_temporal_inpaint
+
+    frame = np.full((40, 40, 3), 77, dtype=np.uint8)
+    result = apply_temporal_inpaint(frame, None, [], [])
+    np.testing.assert_array_equal(result, frame)
+    assert result is not frame
+
+
+def test_apply_temporal_inpaint_fallback_no_reference():
+    """reference=None with boxes → no crash, returns ndarray same shape."""
+    import orchestrator.video_process as vp
+    from orchestrator.video_process import apply_temporal_inpaint
+
+    frame = np.full((60, 60, 3), 50, dtype=np.uint8)
+
+    mock_contours = []  # no contours → TELEA path skipped
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.findContours.return_value = (mock_contours, None)
+        mock_cv2.RETR_EXTERNAL = 0
+        mock_cv2.CHAIN_APPROX_SIMPLE = 1
+        result = apply_temporal_inpaint(frame, None, static_boxes=[(5, 5, 10, 10)], dynamic_boxes=[])
+
+    assert result.shape == frame.shape
+    assert result.dtype == np.uint8

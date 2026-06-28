@@ -160,6 +160,59 @@ def build_temporal_reference(input_path: str, n_samples: int = 20) -> np.ndarray
     return np.median(stack, axis=0).astype(np.uint8)
 
 
+def apply_temporal_inpaint(
+    frame: np.ndarray,
+    reference: np.ndarray | None,
+    static_boxes: list[tuple],
+    dynamic_boxes: list[tuple],
+) -> np.ndarray:
+    """
+    Inpaint static boxes từ temporal reference (pixel copy, rất nhanh).
+    Inpaint dynamic boxes bằng TELEA (như cũ).
+    Nếu reference=None, gộp static vào dynamic để TELEA xử lý hết.
+    """
+    result = frame.copy()
+
+    if reference is not None:
+        h_f, w_f = frame.shape[:2]
+        for (x, y, w, h) in static_boxes:
+            y2 = min(y + h, h_f)
+            x2 = min(x + w, w_f)
+            result[y:y2, x:x2] = reference[y:y2, x:x2]
+        all_dynamic = list(dynamic_boxes)
+    else:
+        # Fallback: xử lý static bằng TELEA
+        all_dynamic = list(static_boxes) + list(dynamic_boxes)
+
+    if not all_dynamic:
+        return result
+
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    for (x, y, w, h) in all_dynamic:
+        pad = 3
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(frame.shape[1], x + w + pad)
+        y2 = min(frame.shape[0], y + h + pad)
+        mask[y1:y2, x1:x2] = 255
+
+    if mask.max() == 0:
+        return result
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        cx1 = max(0, x - 10)
+        cy1 = max(0, y - 10)
+        cx2 = min(frame.shape[1], x + w + 10)
+        cy2 = min(frame.shape[0], y + h + 10)
+        crop_frame = result[cy1:cy2, cx1:cx2]
+        crop_mask = mask[cy1:cy2, cx1:cx2]
+        result[cy1:cy2, cx1:cx2] = cv2.inpaint(crop_frame, crop_mask, 3, cv2.INPAINT_TELEA)
+
+    return result
+
+
 # --- Opt 4: cv2.inpaint instead of GaussianBlur ---
 def apply_inpaint_to_frame(frame, boxes, mask_only=False):
     """Inpaint text regions using TELEA algorithm on localized crops for massive speedup, or return mask."""

@@ -114,3 +114,61 @@ def test_apply_temporal_inpaint_fallback_no_reference():
 
     assert result.shape == frame.shape
     assert result.dtype == np.uint8
+
+
+def test_precompute_ocr_results_batch_call_count():
+    """With 12 OCR frames and batch_size=4, ocr.ocr must be called exactly 3 times."""
+    import orchestrator.video_process as vp
+    from orchestrator.video_process import precompute_ocr_results
+
+    # 120 frames at fps=10, ocr_fps=1 → frame_skip=10 → OCR at 0,10,20,...,110 = 12 frames
+    # batch_size=4 → ceil(12/4) = 3 calls
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+    mock_cap.get.return_value = 120.0
+    mock_frame = np.full((50, 50, 3), 100, dtype=np.uint8)
+    mock_cap.read.return_value = (True, mock_frame)
+
+    mock_ocr = MagicMock()
+    mock_ocr.ocr.return_value = [[] for _ in range(4)]  # 4 empty results per batch
+
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.CAP_PROP_POS_FRAMES = 1
+        mock_cv2.CAP_PROP_FRAME_COUNT = 7
+        result = precompute_ocr_results(
+            '/fake/path.avi', 120, 10.0,
+            ocr_fps=1.0, ocr_batch_size=4,
+            width=50, height=50, ocr=mock_ocr
+        )
+
+    assert mock_ocr.ocr.call_count == 3
+    assert isinstance(result, dict)
+
+
+def test_precompute_ocr_results_returns_correct_keys():
+    """Keys in dict must match OCR frame indices (frame_skip=10 → 0,10,20)."""
+    import orchestrator.video_process as vp
+    from orchestrator.video_process import precompute_ocr_results
+
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+    mock_cap.get.return_value = 30.0
+    mock_frame = np.full((50, 50, 3), 100, dtype=np.uint8)
+    mock_cap.read.return_value = (True, mock_frame)
+
+    mock_ocr = MagicMock()
+    mock_ocr.ocr.return_value = [[]]  # single empty result per call
+
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.CAP_PROP_POS_FRAMES = 1
+        mock_cv2.CAP_PROP_FRAME_COUNT = 7
+        result = precompute_ocr_results(
+            '/fake/path.avi', 30, 10.0,
+            ocr_fps=1.0, ocr_batch_size=1,
+            width=50, height=50, ocr=mock_ocr
+        )
+
+    # fps=10, ocr_fps=1 → frame_skip=10 → keys: 0, 10, 20
+    assert set(result.keys()) == {0, 10, 20}

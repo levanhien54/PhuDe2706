@@ -253,6 +253,56 @@ def apply_inpaint_to_frame(frame, boxes, mask_only=False):
     return res
 
 
+def precompute_ocr_results(
+    input_path: str,
+    total_frames: int,
+    fps: float,
+    ocr_fps: float,
+    ocr_batch_size: int,
+    width: int,
+    height: int,
+    ocr,
+) -> dict[int, list[tuple]]:
+    """Pre-pass: batch OCR on OCR frames. Returns {frame_index: [(x,y,w,h),...]}."""
+    frame_skip = max(1, int(fps / ocr_fps))
+    ocr_indices = list(range(0, total_frames, frame_skip))
+
+    results: dict[int, list[tuple]] = {}
+    batch_smalls: list = []
+    batch_scales: list = []
+    batch_frame_indices: list[int] = []
+
+    cap = cv2.VideoCapture(input_path)
+
+    def _flush_batch():
+        if not batch_smalls:
+            return
+        with _ocr_lock:
+            ocr_results = ocr.ocr(batch_smalls, cls=False)
+        for i, fi in enumerate(batch_frame_indices):
+            results[fi] = _parse_ocr_boxes(ocr_results[i], batch_scales[i], width, height)
+        batch_smalls.clear()
+        batch_scales.clear()
+        batch_frame_indices.clear()
+
+    for fi in ocr_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            continue
+        small, scale = _scale_frame_for_ocr(frame)
+        batch_smalls.append(small)
+        batch_scales.append(scale)
+        batch_frame_indices.append(fi)
+
+        if len(batch_smalls) >= ocr_batch_size:
+            _flush_batch()
+
+    _flush_batch()  # flush remaining
+    cap.release()
+    return results
+
+
 def remove_watermark_from_video(
     input_path: str,
     output_path: str,

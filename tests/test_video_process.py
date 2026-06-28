@@ -1,87 +1,69 @@
 import os
-import sys
-import tempfile
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 
-# Skip this test module if cv2 is not really available (test environment)
-try:
-    import cv2
-    _cv2_available = hasattr(cv2, 'VideoCapture') and hasattr(cv2, 'VideoWriter')
-except (ImportError, AttributeError):
-    _cv2_available = False
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_mock_cap(n_frames: int = 30, h: int = 50, w: int = 50):
+    """Return a MagicMock cv2.VideoCapture that serves synthetic frames."""
+    frame = np.full((h, w, 3), 100, dtype=np.uint8)
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+    mock_cap.get.return_value = float(n_frames)
+    mock_cap.read.return_value = (True, frame)
+    mock_cap.release.return_value = None
+    return mock_cap
 
 
-def _make_test_video(path: str, n_frames: int = 30, h: int = 50, w: int = 50) -> None:
-    """Tạo video synthetic dùng MJPG codec (không cần ffmpeg)."""
-    import cv2
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    writer = cv2.VideoWriter(path, fourcc, 10.0, (w, h))
-    assert writer.isOpened(), f"VideoWriter failed for {path}"
-    for i in range(n_frames):
-        # Frame màu xám với giá trị tăng dần để median dễ tính
-        frame = np.full((h, w, 3), min(i * 8, 200), dtype=np.uint8)
-        writer.write(frame)
-    writer.release()
+# ---------------------------------------------------------------------------
+# build_temporal_reference
+# ---------------------------------------------------------------------------
 
-
-@pytest.mark.skipif(not _cv2_available, reason="cv2.VideoCapture not available in test environment")
 def test_build_temporal_reference_shape():
+    """Valid video → returns ndarray shape (H, W, 3) dtype uint8."""
     from orchestrator.video_process import build_temporal_reference
+    import orchestrator.video_process as vp
 
-    with tempfile.NamedTemporaryFile(suffix='.avi', delete=False) as f:
-        path = f.name
-    try:
-        _make_test_video(path, n_frames=30, h=50, w=50)
-        result = build_temporal_reference(path, n_samples=10)
-        assert result is not None
-        assert result.shape == (50, 50, 3)
-        assert result.dtype == np.uint8
-    finally:
-        if os.path.exists(path):
-            os.unlink(path)
+    mock_cap = _make_mock_cap(n_frames=30, h=50, w=50)
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.CAP_PROP_FRAME_COUNT = 7
+        mock_cv2.CAP_PROP_POS_FRAMES = 1
+        result = build_temporal_reference('/fake/path.avi', n_samples=5)
+
+    assert result is not None
+    assert result.shape == (50, 50, 3)
+    assert result.dtype == np.uint8
 
 
-@pytest.mark.skipif(not _cv2_available, reason="cv2.VideoCapture not available in test environment")
 def test_build_temporal_reference_short_video_returns_none():
+    """Video with < 3 frames → returns None."""
     from orchestrator.video_process import build_temporal_reference
+    import orchestrator.video_process as vp
 
-    with tempfile.NamedTemporaryFile(suffix='.avi', delete=False) as f:
-        path = f.name
-    try:
-        _make_test_video(path, n_frames=2)
-        result = build_temporal_reference(path, n_samples=10)
-        assert result is None
-    finally:
-        if os.path.exists(path):
-            os.unlink(path)
+    mock_cap = _make_mock_cap(n_frames=2)
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.CAP_PROP_FRAME_COUNT = 7
+        mock_cv2.CAP_PROP_POS_FRAMES = 1
+        result = build_temporal_reference('/fake/path.avi', n_samples=10)
+
+    assert result is None
 
 
 def test_build_temporal_reference_invalid_path():
-    """Test that invalid path returns None."""
-    # In test environment, cv2 is stubbed, so we import and patch at function call level
-    import orchestrator.video_process as vp_module
+    """Cap that fails to open → returns None."""
+    from orchestrator.video_process import build_temporal_reference
+    import orchestrator.video_process as vp
 
-    # Create a mock VideoCapture that fails to open
-    mock_cap_class = MagicMock()
-    mock_cap_instance = MagicMock()
-    mock_cap_instance.isOpened.return_value = False
-    mock_cap_instance.release.return_value = None
-    mock_cap_class.return_value = mock_cap_instance
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = False
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.VideoCapture.return_value = mock_cap
+        result = build_temporal_reference('/nonexistent/path.avi', n_samples=5)
 
-    original_cv2 = vp_module.cv2
-    original_cap = getattr(original_cv2, 'VideoCapture', None)
-
-    try:
-        # Mock cv2.VideoCapture to return a closed capture
-        vp_module.cv2.VideoCapture = mock_cap_class
-
-        from orchestrator.video_process import build_temporal_reference
-        result = build_temporal_reference("/nonexistent/path.avi", n_samples=5)
-        assert result is None
-    finally:
-        # Restore original
-        if original_cap is not None:
-            vp_module.cv2.VideoCapture = original_cap
+    assert result is None

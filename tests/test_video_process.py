@@ -172,3 +172,81 @@ def test_precompute_ocr_results_returns_correct_keys():
 
     # fps=10, ocr_fps=1 → frame_skip=10 → keys: 0, 10, 20
     assert set(result.keys()) == {0, 10, 20}
+
+
+# ---------------------------------------------------------------------------
+# _detect_static_boxes (new signature: input_path + total_frames)
+# ---------------------------------------------------------------------------
+
+def test_detect_static_boxes_samples_30_frames():
+    """_detect_static_boxes now samples frames evenly across full video, not just the start."""
+    import orchestrator.video_process as vp
+
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+    mock_cap.get.return_value = 300.0
+    mock_cap.read.return_value = (True, np.full((50, 50, 3), 100, dtype=np.uint8))
+
+    mock_ocr = MagicMock()
+    mock_ocr.ocr.return_value = []
+
+    with patch.object(vp, 'cv2') as mock_cv2:
+        mock_cv2.VideoCapture.return_value = mock_cap
+        mock_cv2.CAP_PROP_POS_FRAMES = 1
+        vp._detect_static_boxes('/fake/path.avi', mock_ocr, 30.0, 50, 50, 300)
+
+    # STATIC_SCAN_FRAMES = 30, so ocr.ocr called at most 30 times
+    assert mock_ocr.ocr.call_count <= vp.STATIC_SCAN_FRAMES
+    assert mock_ocr.ocr.call_count > 0
+
+
+# ---------------------------------------------------------------------------
+# remove_watermark_from_video integration smoke test
+# ---------------------------------------------------------------------------
+
+def test_remove_watermark_integration_no_crash():
+    """remove_watermark_from_video runs end-to-end without crashing (no boxes detected)."""
+    import orchestrator.video_process as vp
+    from orchestrator.video_process import remove_watermark_from_video
+
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = True
+    mock_cap.get.side_effect = lambda prop: {7: 30.0, 5: 30.0, 3: 50.0, 4: 50.0}.get(prop, 30.0)
+    call_count = [0]
+    def _read():
+        call_count[0] += 1
+        if call_count[0] > 30:
+            return False, None
+        return True, np.full((50, 50, 3), 100, dtype=np.uint8)
+    mock_cap.read.side_effect = _read
+    mock_cap.set.return_value = None
+    mock_cap.release.return_value = None
+
+    mock_ocr_instance = MagicMock()
+    mock_ocr_instance.ocr.return_value = []
+
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as fout:
+        out_path = fout.name
+    try:
+        with patch.object(vp, 'cv2') as mock_cv2, \
+             patch.object(vp, 'get_ocr_instance', return_value=mock_ocr_instance), \
+             patch.object(vp, 'build_temporal_reference', return_value=None), \
+             patch.object(vp, 'precompute_ocr_results', return_value={}), \
+             patch.object(vp, '_detect_static_boxes', return_value=[]), \
+             patch('subprocess.Popen') as mock_popen:
+            mock_cv2.VideoCapture.return_value = mock_cap
+            mock_cv2.CAP_PROP_FPS = 5
+            mock_cv2.CAP_PROP_FRAME_WIDTH = 3
+            mock_cv2.CAP_PROP_FRAME_HEIGHT = 4
+            mock_cv2.CAP_PROP_FRAME_COUNT = 7
+
+            mock_proc = MagicMock()
+            mock_proc.stdin = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_popen.return_value = mock_proc
+
+            remove_watermark_from_video('/fake/input.mp4', out_path, mask_only=False, settings=None)
+    finally:
+        if os.path.exists(out_path):
+            os.unlink(out_path)

@@ -19,6 +19,15 @@ async def run_lip_sync(
     new_vocal = os.path.join(temp_dir, "new_vocal.wav")
     output_video = os.path.join(temp_dir, "lipsync.mp4")
 
+    if os.path.exists(output_video):
+        log.info("lip_sync_resume", msg="Found existing lipsync.mp4, skipping inference")
+        return StageResult(
+            stage="lip_sync",
+            success=True,
+            output_path=output_video,
+            duration_seconds=0,
+        )
+
     try:
         async with vram.slot("lipsync", _LIPSYNC_VRAM_GB):
             await run_latentsync_inference(cleaned_video, new_vocal, output_video, settings)

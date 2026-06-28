@@ -4,6 +4,22 @@ import sys
 
 
 def setup_logging(log_level: str = "INFO") -> None:
+    # Setup RotatingFileHandler
+    import logging.handlers
+    import os
+    
+    os.makedirs("data", exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        "data/orchestrator.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
+    )
+    console_handler = logging.StreamHandler(sys.stdout)
+    
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(message)s",
+        handlers=[file_handler, console_handler]
+    )
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -15,7 +31,7 @@ def setup_logging(log_level: str = "INFO") -> None:
             getattr(logging, log_level.upper(), logging.INFO)
         ),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        logger_factory=structlog.stdlib.LoggerFactory(),
     )
 
 

@@ -170,40 +170,51 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
     # Rewind main cap to start
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    # --- Opt 6: FFV1 lossless codec ---
-    # Fix 3: Use os.path.splitext and a throwaway temp file for probe
-    base, _ = os.path.splitext(output_path)
-    output_path_avi = base + '_raw.avi'
-
-    use_ffv1 = False
-    try:
-        _probe_path = tempfile.mktemp(suffix='.avi')
-        _probe = cv2.VideoWriter(_probe_path, cv2.VideoWriter_fourcc(*'FFV1'), fps, (width, height))
-        use_ffv1 = _probe.isOpened()
-        _probe.release()
+    def check_nvenc():
         try:
-            os.remove(_probe_path)
-        except OSError:
-            pass
-    except Exception:
-        pass
+            res = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True)
+            return 'h264_nvenc' in res.stdout
+        except Exception:
+            return False
 
-    if use_ffv1:
-        fourcc = cv2.VideoWriter_fourcc(*'FFV1')
-        fourcc_str = 'FFV1'
-        write_path = output_path_avi
-        print(f"[VideoProcess] Sử dụng codec FFV1 lossless → {write_path}")
-    else:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        fourcc_str = 'mp4v'
-        write_path = output_path
-        print(f"[VideoProcess] FFV1 không khả dụng, fallback sang mp4v")
+    class FFmpegWriter:
+        def __init__(self, path, w, h, f, lossless):
+            self.path = path
+            codec = 'h264_nvenc' if check_nvenc() else 'libx264'
+            cmd = [
+                'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+                '-s', f'{w}x{h}', '-pix_fmt', 'bgr24', '-r', str(f),
+                '-i', '-'
+            ]
+            if lossless:
+                cmd.extend(['-c:v', 'libx264', '-crf', '0'])
+                print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 Lossless)")
+            else:
+                if codec == 'h264_nvenc':
+                    cmd.extend(['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-b:v', '5M'])
+                    print(f"[VideoProcess] FFmpeg Writer: {path} (h264_nvenc GPU Accelerated)")
+                else:
+                    cmd.extend(['-c:v', 'libx264', '-crf', '18', '-preset', 'fast'])
+                    print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 CPU)")
+            cmd.append(path)
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        
+        def write(self, frame):
+            if self.proc.stdin:
+                self.proc.stdin.write(frame.tobytes())
+                
+        def release(self):
+            if self.proc.stdin:
+                self.proc.stdin.close()
+            self.proc.wait()
+            
+        def isOpened(self):
+            return self.proc.poll() is None
 
-    out = cv2.VideoWriter(write_path, fourcc, fps, (width, height))
-    # Fix 4: Check VideoWriter opened successfully
+    out = FFmpegWriter(output_path, width, height, fps, lossless=mask_only)
     if not out.isOpened():
         cap.release()
-        raise RuntimeError(f"Failed to open VideoWriter at {write_path} with fourcc={fourcc_str}")
+        raise RuntimeError(f"Failed to open FFmpegWriter at {output_path}")
 
     ocr_fps = 2.0
 
@@ -285,19 +296,6 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
 
     cap.release()
     out.release()
-
-    # --- Opt 6: Remux with FFmpeg if we used FFV1 ---
-    if use_ffv1:
-        print(f"[VideoProcess] Remux FFV1 → {output_path} (lossless copy)...")
-        # Fix 5: wrap subprocess + always clean up AVI
-        try:
-            subprocess.run(
-                ['ffmpeg', '-y', '-i', output_path_avi, '-c:v', 'copy', output_path],
-                check=True, capture_output=True
-            )
-        finally:
-            if os.path.exists(output_path_avi):
-                os.remove(output_path_avi)
 
     print(f"[VideoProcess] Hoàn tất xóa chữ động: {output_path}")
 

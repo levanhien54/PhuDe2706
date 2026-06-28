@@ -25,6 +25,15 @@ async def run_synthesize(
     vocal_path = os.path.join(temp_dir, "vocal.wav")
     final_output = os.path.join(temp_dir, "new_vocal.wav")
 
+    if os.path.exists(final_output):
+        log.info("synthesize_resume", msg="Found existing new_vocal.wav, skipping inference")
+        return StageResult(
+            stage="synthesize",
+            success=True,
+            output_path=final_output,
+            duration_seconds=0,
+        )
+
     try:
         with sf.SoundFile(vocal_path) as f:
             sr = f.samplerate

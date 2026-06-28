@@ -22,13 +22,48 @@ from orchestrator.database import (
 
 log = get_logger(__name__)
 
+job_queue = asyncio.Queue()
+
+async def pipeline_worker():
+    while True:
+        task_func, args = await job_queue.get()
+        try:
+            await task_func(*args)
+        except Exception as e:
+            log.error("worker_error", error=str(e))
+        finally:
+            job_queue.task_done()
+
+async def cleanup_loop():
+    while True:
+        await asyncio.sleep(3600)  # check every hour
+        temp_dir = os.path.join(settings.data_dir, "temp")
+        if not os.path.exists(temp_dir):
+            continue
+        import time
+        now = time.time()
+        for item in os.listdir(temp_dir):
+            path = os.path.join(temp_dir, item)
+            if os.path.isdir(path):
+                # 24 hours = 86400 seconds
+                if now - os.path.getmtime(path) > 86400:
+                    shutil.rmtree(path, ignore_errors=True)
+                    log.info("cleaned_up_stale_temp", path=path)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # On startup: recover stale jobs from previous crash
     recovered = fail_stale_jobs(timeout_hours=2)
     if recovered:
         log.info("startup_recovered_stale_jobs", count=recovered)
+        
+    worker_task = asyncio.create_task(pipeline_worker())
+    clean_task = asyncio.create_task(cleanup_loop())
+    
     yield
+    
+    worker_task.cancel()
+    clean_task.cancel()
 
 app = FastAPI(title="Video Dubbing API", lifespan=lifespan)
 
@@ -166,11 +201,11 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
 
 
 @app.post("/api/dub/{filename}")
-async def start_dubbing(filename: str, background_tasks: BackgroundTasks, target_lang: str = "Tiếng Việt"):
+async def start_dubbing(filename: str, target_lang: str = "Tiếng Việt"):
     job_id = str(uuid.uuid4())[:8]
     save_job(job_id, filename, target_lang, settings.vram_profile)
-    background_tasks.add_task(run_pipeline_task, job_id, filename, target_lang)
-    return {"job_id": job_id, "message": "Dubbing started"}
+    job_queue.put_nowait((run_pipeline_task, (job_id, filename, target_lang)))
+    return {"job_id": job_id, "message": "Dubbing queued"}
 
 @app.get("/api/status/{filename}")
 async def get_status(filename: str):
@@ -241,10 +276,10 @@ async def run_pipeline_resume_task(job_id: str):
         _cleanup_temp(job.base_name, settings.data_dir)
 
 @app.post("/api/jobs/{job_id}/resume")
-async def resume_dubbing(job_id: str, background_tasks: BackgroundTasks):
+async def resume_dubbing(job_id: str):
     job_info = get_job(job_id)
     if not job_info or job_info["status"] != "AWAITING_REVIEW":
         raise HTTPException(status_code=400, detail="Job not ready for resume")
         
-    background_tasks.add_task(run_pipeline_resume_task, job_id)
-    return {"message": "Resumed"}
+    job_queue.put_nowait((run_pipeline_resume_task, (job_id,)))
+    return {"message": "Resume queued"}

@@ -16,30 +16,21 @@ def _get_sem() -> asyncio.Semaphore:
         _SEM = asyncio.Semaphore(10)
     return _SEM
 
-_TRANSLATE_PROMPT_VI = (
-    "Dịch câu sau sang {target_lang} một cách tự nhiên, giữ đúng ngữ cảnh. "
-    "Chỉ trả về bản dịch, không giải thích:\n\n{text}"
+_SYS_PROMPT_VI = (
+    "Bạn là dịch giả phụ đề video chuyên nghiệp. Dịch sang {target_lang}. "
+    "Luôn duy trì ngữ cảnh tự nhiên và chú ý 'speaker' (người nói) để dùng đại từ nhân xưng thống nhất.\n"
+    "CHỈ TRẢ VỀ MẢNG JSON, mỗi phần tử gồm 'id' và 'translated'. Không kèm text nào khác."
 )
 
-_TRANSLATE_PROMPT_EN = (
-    "Translate the following text to {target_lang} naturally, preserving context. "
-    "Return only the translation, no explanation:\n\n{text}"
+_SYS_PROMPT_EN = (
+    "You are a professional video subtitle translator. Translate into {target_lang}. "
+    "Always maintain natural context and pay attention to 'speaker' for consistent pronouns.\n"
+    "RETURN ONLY A JSON ARRAY, each element with 'id' and 'translated'. No other text."
 )
 
-_BATCH_PROMPT_VI = (
-    "Bạn là dịch giả chuyên nghiệp. Dịch các phụ đề sau sang {target_lang}. "
-    "Giữ ngữ cảnh tự nhiên. "
-    "Trả về KẾT QUẢ ĐÚNG ĐỊNH DẠNG JSON array, mỗi phần tử có 'id' và 'translated'. "
-    "Không thêm markdown, giải thích hoặc text ngoài JSON array.\n"
-    "Input JSON:\n{json_data}"
-)
-
-_BATCH_PROMPT_EN = (
-    "You are a professional translator. Translate the following subtitles into {target_lang}. "
-    "Keep the context natural. "
-    "Return STRICTLY a valid JSON array where each element has 'id' and 'translated' keys. "
-    "No markdown, explanations, or text outside the JSON array.\n"
-    "Input JSON:\n{json_data}"
+_USER_PROMPT_TPL = (
+    "Previous Context (Do not translate this part, use for reference only):\n{context}\n\n"
+    "Subtitles to translate:\n{json_data}"
 )
 
 
@@ -72,44 +63,50 @@ class LLMClient(BaseClient):
                 result = await self.post_json("/api/generate", payload)
                 return result.get("response", "").strip()
 
-    async def _translate_batch_chunk(self, chunk: list[SrtSegment], target_lang: str) -> list[str]:
+    async def _translate_batch_chunk(self, chunk: list[SrtSegment], target_lang: str, previous_context: str = "", retry: int = 0) -> list[str]:
         # Use 0-based IDs within chunk to avoid LLM reindexing issues
         input_data = [
-            {"id": i, "text": s.text}
+            {"id": i, "speaker": s.speaker or "UNKNOWN", "text": s.text}
             for i, s in enumerate(chunk)
         ]
 
         is_vi = target_lang.lower().startswith("tiếng việt") or target_lang.lower() in ("vi", "vietnamese")
-        batch_tpl = _BATCH_PROMPT_VI if is_vi else _BATCH_PROMPT_EN
-        prompt = batch_tpl.format(target_lang=target_lang, json_data=json.dumps(input_data, ensure_ascii=False))
+        sys_prompt = _SYS_PROMPT_VI.format(target_lang=target_lang) if is_vi else _SYS_PROMPT_EN.format(target_lang=target_lang)
+        
+        user_prompt = _USER_PROMPT_TPL.format(
+            context=previous_context if previous_context else "None",
+            json_data=json.dumps(input_data, ensure_ascii=False)
+        )
+        
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
 
         try:
             if self.settings.llm_backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,
-                    "prompt": prompt,
+                    "messages": messages,
                     "max_tokens": 2048,
                     "temperature": 0.3,
                 }
-                result = await self.post_json("/v1/completions", payload)
-                raw_out = result["choices"][0]["text"].strip()
+                result = await self.post_json("/v1/chat/completions", payload)
+                raw_out = result["choices"][0]["message"]["content"].strip()
             else:  # ollama
                 payload = {
                     "model": self.settings.llm_model,
-                    "prompt": prompt,
+                    "messages": messages,
                     "stream": False,
                     "format": "json"
                 }
-                result = await self.post_json("/api/generate", payload)
-                raw_out = result.get("response", "").strip()
+                result = await self.post_json("/api/chat", payload)
+                raw_out = result.get("message", {}).get("content", "").strip()
 
-            # Strip markdown code block if present
-            if raw_out.startswith("```json"):
-                raw_out = raw_out[7:]
-            if raw_out.startswith("```"):
-                raw_out = raw_out[3:]
-            if raw_out.endswith("```"):
-                raw_out = raw_out[:-3]
+            import re
+            match = re.search(r'\[.*\]', raw_out, re.DOTALL)
+            if match:
+                raw_out = match.group(0)
 
             parsed = json.loads(raw_out.strip())
 
@@ -122,8 +119,13 @@ class LLMClient(BaseClient):
             return translations
 
         except Exception as e:
+            if retry < 1:
+                log.warning("batch_translation_failed_retry", error=str(e), chunk_size=len(chunk))
+                await asyncio.sleep(1.0)
+                return await self._translate_batch_chunk(chunk, target_lang, previous_context, retry=retry+1)
+            
             log.warning("batch_translation_failed_fallback", error=str(e), chunk_size=len(chunk))
-            await asyncio.sleep(1.0)  # brief backoff before retrying individually
+            await asyncio.sleep(1.0)
             tasks = [self._translate_one(s.text, target_lang) for s in chunk]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             return [
@@ -138,19 +140,17 @@ class LLMClient(BaseClient):
         chunk_size = 20
         chunks = [segments[i:i+chunk_size] for i in range(0, len(segments), chunk_size)]
 
-        # Limit concurrent batch requests with semaphore
-        batch_sem = asyncio.Semaphore(3)
+        translations = []
+        previous_context = ""
+        
+        for chunk in chunks:
+            chunk_trans = await self._translate_batch_chunk(chunk, target_lang, previous_context)
+            translations.extend(chunk_trans)
+            
+            last_5 = list(zip(chunk[-5:], chunk_trans[-5:]))
+            ctx_lines = [f"[{s.speaker or 'UNKNOWN'}] {s.text} -> {t}" for s, t in last_5]
+            previous_context = "\n".join(ctx_lines)
 
-        async def _run_chunk(chunk):
-            async with batch_sem:
-                return await self._translate_batch_chunk(chunk, target_lang)
-
-        chunk_results = await asyncio.gather(*[
-            _run_chunk(chunk)
-            for chunk in chunks
-        ])
-
-        translations = [t for chunk_trans in chunk_results for t in chunk_trans]
         result = []
         for seg, trans in zip(segments, translations):
             result.append(SrtSegment(start=seg.start, end=seg.end, text=seg.text, translated=trans, speaker=seg.speaker))

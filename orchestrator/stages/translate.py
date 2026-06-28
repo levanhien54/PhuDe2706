@@ -1,4 +1,4 @@
-import time
+import os, time, json
 from orchestrator.models import PipelineJob, StageResult, SrtSegment
 from orchestrator.config import Settings
 from orchestrator.vram_manager import VRAMManager
@@ -39,11 +39,26 @@ async def run_translate(
     vram: VRAMManager,
 ) -> tuple[StageResult, list[SrtSegment]]:
     start_time = time.monotonic()
+    json_path = os.path.join(settings.data_dir, "temp", job.base_name, "translate.json")
+    if os.path.exists(json_path):
+        log.info("translate_resume", msg="Found existing translate.json, skipping inference")
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            translated = [SrtSegment.model_validate(seg) for seg in data]
+            return StageResult(stage="translate", success=True, duration_seconds=0), translated
+        except Exception as e:
+            log.warning("translate_resume_failed", error=str(e))
+
     try:
         async with vram.slot("llm", _LLM_VRAM_GB):
             client = LLMClient(settings)
             merged_segments = merge_segments(segments)
             translated = await client.translate_batch(merged_segments, target_lang=job.target_language)
+            
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump([s.model_dump() for s in translated], f, ensure_ascii=False, indent=2)
+            
         result = StageResult(
             stage="translate",
             success=True,

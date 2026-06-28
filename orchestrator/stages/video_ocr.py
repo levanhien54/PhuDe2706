@@ -20,6 +20,15 @@ async def run_video_ocr(
     os.makedirs(temp_dir, exist_ok=True)
     output_video = os.path.join(temp_dir, "cleaned.mp4")
 
+    if os.path.exists(output_video):
+        log.info("video_ocr_resume", msg="Found existing cleaned.mp4, skipping inference")
+        return StageResult(
+            stage="video_ocr",
+            success=True,
+            output_path=output_video,
+            duration_seconds=0,
+        )
+
     try:
         async with vram.slot("paddleocr", _OCR_VRAM_GB):
             if settings.enable_propainter:

@@ -18,6 +18,18 @@ async def run_audio_separate(
     temp_dir = os.path.join(settings.data_dir, "temp", job.base_name)
     os.makedirs(temp_dir, exist_ok=True)
 
+    vocal_path = os.path.join(temp_dir, "vocal.wav")
+    bg_path = os.path.join(temp_dir, "bg.wav")
+    
+    if os.path.exists(vocal_path) and os.path.exists(bg_path):
+        log.info("audio_separate_resume", msg="Found existing vocal.wav and bg.wav, skipping inference")
+        return StageResult(
+            stage="audio_separate",
+            success=True,
+            output_path=vocal_path,
+            duration_seconds=0,
+        )
+
     try:
         async with vram.slot("demucs", _DEMUCS_VRAM_GB):
             client = DemucsClient(settings)

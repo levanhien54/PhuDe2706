@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     lipsync_api: str = Field("http://127.0.0.1:8010", validation_alias="LIPSYNC_API")
 
     # Engine selection
-    tts_engine: str = Field("omnivoice", validation_alias="TTS_ENGINE")
+    tts_engine: str = Field("gpt_sovits", validation_alias="TTS_ENGINE")
     llm_backend: str = Field("ollama", validation_alias="LLM_BACKEND")
     llm_model: str = Field("qwen2.5:14b", validation_alias="LLM_MODEL")
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")

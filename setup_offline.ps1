@@ -49,6 +49,8 @@ Write-Host "Cài đặt TTS..."
 # Phụ thuộc khác
 Write-Host "Cài đặt các gói phụ thuộc mở rộng..."
 & $PipExe install @BasePipArgs demucs vllm einops scipy huggingface_hub diffusers
+Write-Host "Cài đặt mmcv (cần cho ProPainter)..."
+& $PipExe install @BasePipArgs "mmcv>=2.0.0"
 
 # LatentSync
 if (Test-Path "$ProjectRoot\models\latentsync\requirements.txt") {

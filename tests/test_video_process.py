@@ -245,6 +245,8 @@ def test_remove_watermark_integration_no_crash():
             mock_proc = MagicMock()
             mock_proc.stdin = MagicMock()
             mock_proc.poll.return_value = None
+            mock_proc.wait.return_value = 0
+            mock_proc.stderr = iter([])
             mock_popen.return_value = mock_proc
 
             remove_watermark_from_video('/fake/input.mp4', out_path, mask_only=False, settings=None)
@@ -299,6 +301,8 @@ def test_remove_watermark_integration_creates_output():
             mock_proc = MagicMock()
             mock_proc.stdin = MagicMock()
             mock_proc.poll.return_value = None
+            mock_proc.wait.return_value = 0
+            mock_proc.stderr = iter([])
             mock_popen.return_value = mock_proc
 
             remove_watermark_from_video(in_path, out_path, mask_only=False, settings=None)

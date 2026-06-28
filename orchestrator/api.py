@@ -38,28 +38,34 @@ async def cleanup_loop():
     _active_statuses = {"PROCESSING", "AWAITING_REVIEW", "PROCESSING_PHASE2"}
     while True:
         await asyncio.sleep(3600)  # check every hour
-        temp_dir = os.path.join(settings.data_dir, "temp")
-        if not os.path.exists(temp_dir):
-            continue
-        import time
-        now = time.time()
-        for item in os.listdir(temp_dir):
-            path = os.path.join(temp_dir, item)
-            if not os.path.isdir(path):
+        try:
+            temp_dir = os.path.join(settings.data_dir, "temp")
+            if not os.path.exists(temp_dir):
                 continue
-            if now - os.path.getmtime(path) <= 86400:
-                continue
-            # Never wipe dirs whose job is still active (AWAITING_REVIEW can sit >24h)
-            is_active = False
-            for ext in ALLOWED_EXTENSIONS:
-                job_info = get_job_by_filename(item + ext)
-                if job_info and job_info.get("status") in _active_statuses:
-                    is_active = True
-                    break
-            if is_active:
-                continue
-            shutil.rmtree(path, ignore_errors=True)
-            log.info("cleaned_up_stale_temp", path=path)
+            import time
+            now = time.time()
+            for item in os.listdir(temp_dir):
+                try:
+                    path = os.path.join(temp_dir, item)
+                    if not os.path.isdir(path):
+                        continue
+                    if now - os.path.getmtime(path) <= 86400:
+                        continue
+                    # Never wipe dirs whose job is still active (AWAITING_REVIEW can sit >24h)
+                    is_active = False
+                    for ext in ALLOWED_EXTENSIONS:
+                        job_info = get_job_by_filename(item + ext)
+                        if job_info and job_info.get("status") in _active_statuses:
+                            is_active = True
+                            break
+                    if is_active:
+                        continue
+                    shutil.rmtree(path, ignore_errors=True)
+                    log.info("cleaned_up_stale_temp", path=path)
+                except Exception:
+                    log.exception("cleanup_loop_item_failed", item=item)
+        except Exception:
+            log.exception("cleanup_loop_iteration_failed")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

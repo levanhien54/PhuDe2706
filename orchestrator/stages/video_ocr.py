@@ -20,7 +20,9 @@ async def run_video_ocr(
     os.makedirs(temp_dir, exist_ok=True)
     output_video = os.path.join(temp_dir, "cleaned.mp4")
 
-    if os.path.exists(output_video):
+    propainter_flag = "propainter" if settings.enable_propainter else "ocr"
+    resume_marker = os.path.join(temp_dir, f"cleaned.{propainter_flag}.done")
+    if os.path.exists(output_video) and os.path.exists(resume_marker):
         log.info("video_ocr_resume", msg="Found existing cleaned.mp4, skipping inference")
         return StageResult(
             stage="video_ocr",
@@ -46,6 +48,7 @@ async def run_video_ocr(
                 success = await run_propainter_inference(input_video, mask_video, output_video, propainter_dir)
                 if not success:
                     raise Exception("ProPainter inference failed")
+        open(resume_marker, 'w').close()
         return StageResult(
             stage="video_ocr",
             success=True,

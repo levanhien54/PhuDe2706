@@ -1,4 +1,4 @@
-import os, time, json
+import os, re, time, json
 from orchestrator.models import PipelineJob, StageResult, SrtSegment
 from orchestrator.config import Settings
 from orchestrator.vram_manager import VRAMManager
@@ -39,7 +39,8 @@ async def run_translate(
     vram: VRAMManager,
 ) -> tuple[StageResult, list[SrtSegment]]:
     start_time = time.monotonic()
-    json_path = os.path.join(settings.data_dir, "temp", job.base_name, "translate.json")
+    lang_slug = re.sub(r'[^\w]', '_', job.target_language.lower())
+    json_path = os.path.join(settings.data_dir, "temp", job.base_name, f"translate.{lang_slug}.json")
     if os.path.exists(json_path):
         log.info("translate_resume", msg="Found existing translate.json, skipping inference")
         try:

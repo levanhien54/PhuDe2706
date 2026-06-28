@@ -87,15 +87,22 @@ def health():
 
 @app.post("/unload")
 def unload():
-    # Attempt to unload models and clear cache
     try:
+        import sys, gc
+        mod = sys.modules.get("GPT_SoVITS.inference_webui")
+        if mod is not None:
+            for _name in ("vq_model", "t2s_model", "bert_model", "ssl_model", "hps"):
+                try:
+                    setattr(mod, _name, None)
+                except Exception:
+                    pass
+        gc.collect()
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            log.info("CUDA cache cleared for TTS.")
+            log.info("TTS models unloaded and CUDA cache cleared.")
     except Exception as e:
-        log.warning("Failed to clear TTS CUDA cache: %s", e)
-        
+        log.warning("tts_unload_failed: %s", e)
     return {"status": "unloaded"}
 
 

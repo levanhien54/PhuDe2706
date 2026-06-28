@@ -75,7 +75,7 @@ class LLMClient(BaseClient):
         if match:
             try:
                 parsed = json.loads(match.group(0))
-                if parsed and "translated" in parsed[0]:
+                if parsed and parsed[0].get("translated"):
                     return parsed[0]["translated"]
             except (json.JSONDecodeError, IndexError, KeyError):
                 pass
@@ -128,7 +128,7 @@ class LLMClient(BaseClient):
 
             parsed = json.loads(raw_out.strip())
 
-            parsed_dict = {item["id"]: item.get("translated", "") for item in parsed if "id" in item}
+            parsed_dict = {item["id"]: item["translated"] for item in parsed if item.get("translated") and "id" in item}
             missing = [i for i in range(len(chunk)) if i not in parsed_dict]
             if missing:
                 log.warning("batch_translation_partial", missing_count=len(missing), total=len(chunk))

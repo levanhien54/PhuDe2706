@@ -1,4 +1,5 @@
 import os
+import collections
 import cv2
 import math
 import shutil
@@ -282,7 +283,7 @@ def precompute_ocr_results(
             with _ocr_lock:
                 ocr_results = ocr.ocr(batch_smalls, cls=False)
             for i, fi in enumerate(batch_frame_indices):
-                results[fi] = _parse_ocr_boxes(ocr_results[i], batch_scales[i], width, height)
+                results[fi] = _parse_ocr_boxes([ocr_results[i]], batch_scales[i], width, height)
             batch_smalls.clear()
             batch_scales.clear()
             batch_frame_indices.clear()
@@ -396,17 +397,27 @@ def remove_watermark_from_video(
                     cmd.extend(['-c:v', 'libx264', '-crf', '18', '-preset', 'fast'])
                     print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 CPU)")
             cmd.append(path)
-            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            self._stderr_tail = collections.deque(maxlen=64)
+            def _drain():
+                for line in self.proc.stderr:
+                    self._stderr_tail.append(line.decode('utf-8', 'replace'))
+            self._stderr_thread = _threading.Thread(target=_drain, daemon=True)
+            self._stderr_thread.start()
+
         def write(self, frame):
             if self.proc.stdin:
                 self.proc.stdin.write(frame.tobytes())
-                
+
         def release(self):
             if self.proc.stdin:
                 self.proc.stdin.close()
-            self.proc.wait()
-            
+            rc = self.proc.wait()
+            self._stderr_thread.join(timeout=5)
+            if rc != 0:
+                tail = ''.join(self._stderr_tail)
+                raise RuntimeError(f'ffmpeg exited {rc} for {self.path}:\n{tail}')
+
         def isOpened(self):
             return self.proc.poll() is None
 

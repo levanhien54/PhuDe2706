@@ -48,6 +48,8 @@ echo "Cài đặt TTS..."
 
 echo "Cài đặt các gói phụ thuộc mở rộng..."
 "$PIP_EXE" install $BASE_PIP_ARGS demucs vllm einops scipy huggingface_hub diffusers
+echo "Cài đặt mmcv (cần cho ProPainter)..."
+"$PIP_EXE" install $BASE_PIP_ARGS "mmcv>=2.0.0"
 
 if [ -f "$PROJECT_ROOT/models/latentsync/requirements.txt" ]; then
     echo "Cài đặt phụ thuộc LatentSync..."

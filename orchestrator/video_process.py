@@ -96,6 +96,8 @@ STATIC_THRESHOLD = 0.7  # box must appear in 70% of scan frames
 def _detect_static_boxes(input_path: str, ocr, fps: float, width: int, height: int, total_frames: int) -> list[tuple]:
     """Scan 30 frames phân bố đều toàn video để tìm watermark tĩnh."""
     n = min(STATIC_SCAN_FRAMES, max(3, total_frames))
+    if total_frames <= 1:
+        return []  # Not enough frames for meaningful static detection
     indices = [int(i * (total_frames - 1) / (n - 1)) for i in range(n)]
 
     box_counts: dict = {}
@@ -103,22 +105,24 @@ def _detect_static_boxes(input_path: str, ocr, fps: float, width: int, height: i
     scanned = 0
 
     cap = cv2.VideoCapture(input_path)
-    for fi in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            continue
-        small, scale = _scale_frame_for_ocr(frame)
-        with _ocr_lock:
-            result = ocr.ocr(small, cls=False)
-        boxes = _parse_ocr_boxes(result, scale, width, height)
-        for box in boxes:
-            x, y, w, h = box
-            key = (x // 20, y // 20)
-            box_counts[key] = box_counts.get(key, 0) + 1
-            box_map[key] = box
-        scanned += 1
-    cap.release()
+    try:
+        for fi in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                continue
+            small, scale = _scale_frame_for_ocr(frame)
+            with _ocr_lock:
+                result = ocr.ocr(small, cls=False)
+            boxes = _parse_ocr_boxes(result, scale, width, height)
+            for box in boxes:
+                x, y, w, h = box
+                key = (x // 20, y // 20)
+                box_counts[key] = box_counts.get(key, 0) + 1
+                box_map[key] = box
+            scanned += 1
+    finally:
+        cap.release()
 
     threshold = max(1, int(scanned * STATIC_THRESHOLD))
     return [box_map[k] for k, cnt in box_counts.items() if cnt >= threshold]
@@ -271,33 +275,34 @@ def precompute_ocr_results(
     batch_frame_indices: list[int] = []
 
     cap = cv2.VideoCapture(input_path)
+    try:
+        def _flush_batch():
+            if not batch_smalls:
+                return
+            with _ocr_lock:
+                ocr_results = ocr.ocr(batch_smalls, cls=False)
+            for i, fi in enumerate(batch_frame_indices):
+                results[fi] = _parse_ocr_boxes(ocr_results[i], batch_scales[i], width, height)
+            batch_smalls.clear()
+            batch_scales.clear()
+            batch_frame_indices.clear()
 
-    def _flush_batch():
-        if not batch_smalls:
-            return
-        with _ocr_lock:
-            ocr_results = ocr.ocr(batch_smalls, cls=False)
-        for i, fi in enumerate(batch_frame_indices):
-            results[fi] = _parse_ocr_boxes(ocr_results[i], batch_scales[i], width, height)
-        batch_smalls.clear()
-        batch_scales.clear()
-        batch_frame_indices.clear()
+        for fi in ocr_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                continue
+            small, scale = _scale_frame_for_ocr(frame)
+            batch_smalls.append(small)
+            batch_scales.append(scale)
+            batch_frame_indices.append(fi)
 
-    for fi in ocr_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            continue
-        small, scale = _scale_frame_for_ocr(frame)
-        batch_smalls.append(small)
-        batch_scales.append(scale)
-        batch_frame_indices.append(fi)
+            if len(batch_smalls) >= ocr_batch_size:
+                _flush_batch()
 
-        if len(batch_smalls) >= ocr_batch_size:
-            _flush_batch()
-
-    _flush_batch()  # flush remaining
-    cap.release()
+        _flush_batch()  # flush remaining
+    finally:
+        cap.release()
     return results
 
 
@@ -341,14 +346,17 @@ def remove_watermark_from_video(
         static_boxes = []
     print(f"[VideoProcess] Phát hiện {len(static_boxes)} static box(es).")
 
-    # --- Pre-pass B: temporal reference (clean background) ---
-    print("[VideoProcess] Xây dựng temporal reference...")
-    try:
-        temporal_ref = build_temporal_reference(input_path, n_samples=20)
-        if temporal_ref is None:
-            print("[VideoProcess] Video quá ngắn, dùng TELEA fallback.")
-    except Exception as e:
-        print(f"[VideoProcess] Cảnh báo temporal reference: {e}")
+    # --- Pre-pass B: temporal reference (only needed for normal inpainting) ---
+    if not mask_only:
+        print("[VideoProcess] Xây dựng temporal reference...")
+        try:
+            temporal_ref = build_temporal_reference(input_path, n_samples=20)
+            if temporal_ref is None:
+                print("[VideoProcess] Video quá ngắn, dùng TELEA fallback.")
+        except Exception as e:
+            print(f"[VideoProcess] Cảnh báo temporal reference: {e}")
+            temporal_ref = None
+    else:
         temporal_ref = None
 
     # --- Pre-pass C: OCR batch pre-computation ---

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     enable_kvcached: bool = Field(False, validation_alias="ENABLE_KVCACHED")
 
     # Paths
-    data_dir: str = Field("/app/data", validation_alias="DATA_DIR")
+    data_dir: str = Field("./data", validation_alias="DATA_DIR")
 
     # Tuning
     http_timeout: float = Field(300.0, validation_alias="HTTP_TIMEOUT")

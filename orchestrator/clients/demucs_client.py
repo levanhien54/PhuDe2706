@@ -1,3 +1,5 @@
+import sys
+import shutil
 from orchestrator.clients.base import BaseClient, ServiceUnavailableError
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
@@ -19,34 +21,37 @@ class DemucsClient(BaseClient):
         if self.is_local:
             import asyncio
             import os
-            # Run demucs natively via subprocess
-            # htdemucs is the default model
             cmd = [
-                "demucs",
+                sys.executable, "-m", "demucs",
                 "--two-stems=vocals",
                 "-n", "htdemucs",
                 "-o", output_dir,
                 video_path
             ]
-            log.debug("demucs_cmd", cmd=" ".join(cmd))
-            
+            log.debug("demucs_cmd", cmd=" ".join(str(c) for c in cmd))
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-            
+
             if process.returncode != 0:
                 log.error("demucs_local_failed", stderr=stderr.decode())
                 raise ServiceUnavailableError(f"Local Demucs failed: {stderr.decode()}")
-                
+
             base_name = os.path.splitext(os.path.basename(video_path))[0]
-            vocal_path = os.path.join(output_dir, "htdemucs", base_name, "vocals.wav")
-            background_path = os.path.join(output_dir, "htdemucs", base_name, "no_vocals.wav")
-            
-            log.info("demucs_separate_done", vocal=vocal_path)
-            return {"vocal": vocal_path, "background": background_path}
+            src_vocal = os.path.join(output_dir, "htdemucs", base_name, "vocals.wav")
+            src_bg = os.path.join(output_dir, "htdemucs", base_name, "no_vocals.wav")
+            dst_vocal = os.path.join(output_dir, "vocal.wav")
+            dst_bg = os.path.join(output_dir, "bg.wav")
+            shutil.move(src_vocal, dst_vocal)
+            shutil.move(src_bg, dst_bg)
+            shutil.rmtree(os.path.join(output_dir, "htdemucs"), ignore_errors=True)
+
+            log.info("demucs_separate_done", vocal=dst_vocal)
+            return {"vocal": dst_vocal, "background": dst_bg}
             
         else:
             if not await self.health_check():

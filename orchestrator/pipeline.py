@@ -60,13 +60,13 @@ async def unload_all_models(settings: Settings):
     async with httpx.AsyncClient(timeout=5.0) as client:
         # Unload WhisperX
         try:
-            await client.post(f"{settings.whisperx_host}/unload")
+            await client.post(f"{settings.whisperx_api}/unload")
         except Exception as e:
             log.warning("whisperx_unload_failed", error=str(e))
-            
+
         # Unload TTS
         try:
-            await client.post(f"{settings.tts_host}/unload")
+            await client.post(f"{settings.tts_api}/unload")
         except Exception as e:
             log.warning("tts_unload_failed", error=str(e))
             

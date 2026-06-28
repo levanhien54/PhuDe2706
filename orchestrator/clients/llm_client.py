@@ -42,26 +42,44 @@ class LLMClient(BaseClient):
 
     async def _translate_one(self, text: str, target_lang: str) -> str:
         is_vi = target_lang.lower().startswith("tiếng việt") or target_lang.lower() in ("vi", "vietnamese")
-        prompt_tpl = _TRANSLATE_PROMPT_VI if is_vi else _TRANSLATE_PROMPT_EN
-        prompt = prompt_tpl.format(text=text, target_lang=target_lang)
+        sys_prompt = _SYS_PROMPT_VI.format(target_lang=target_lang) if is_vi else _SYS_PROMPT_EN.format(target_lang=target_lang)
+        user_prompt = _USER_PROMPT_TPL.format(
+            context="None",
+            json_data=json.dumps([{"id": 0, "text": text}], ensure_ascii=False)
+        )
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
         async with _get_sem():
             if self.settings.llm_backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,
-                    "prompt": prompt,
+                    "messages": messages,
                     "max_tokens": 512,
                     "temperature": 0.3,
                 }
-                result = await self.post_json("/v1/completions", payload)
-                return result["choices"][0]["text"].strip()
-            else:  # ollama
+                result = await self.post_json("/v1/chat/completions", payload)
+                raw_out = result["choices"][0]["message"]["content"].strip()
+            else:
                 payload = {
                     "model": self.settings.llm_model,
-                    "prompt": prompt,
+                    "messages": messages,
                     "stream": False,
+                    "format": "json",
                 }
-                result = await self.post_json("/api/generate", payload)
-                return result.get("response", "").strip()
+                result = await self.post_json("/api/chat", payload)
+                raw_out = result.get("message", {}).get("content", "").strip()
+        import re
+        match = re.search(r'\[.*\]', raw_out, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+                if parsed and "translated" in parsed[0]:
+                    return parsed[0]["translated"]
+            except (json.JSONDecodeError, IndexError, KeyError):
+                pass
+        return text
 
     async def _translate_batch_chunk(self, chunk: list[SrtSegment], target_lang: str, previous_context: str = "", retry: int = 0) -> list[str]:
         # Use 0-based IDs within chunk to avoid LLM reindexing issues

@@ -35,6 +35,7 @@ async def pipeline_worker():
             job_queue.task_done()
 
 async def cleanup_loop():
+    _active_statuses = {"PROCESSING", "AWAITING_REVIEW", "PROCESSING_PHASE2"}
     while True:
         await asyncio.sleep(3600)  # check every hour
         temp_dir = os.path.join(settings.data_dir, "temp")
@@ -44,11 +45,21 @@ async def cleanup_loop():
         now = time.time()
         for item in os.listdir(temp_dir):
             path = os.path.join(temp_dir, item)
-            if os.path.isdir(path):
-                # 24 hours = 86400 seconds
-                if now - os.path.getmtime(path) > 86400:
-                    shutil.rmtree(path, ignore_errors=True)
-                    log.info("cleaned_up_stale_temp", path=path)
+            if not os.path.isdir(path):
+                continue
+            if now - os.path.getmtime(path) <= 86400:
+                continue
+            # Never wipe dirs whose job is still active (AWAITING_REVIEW can sit >24h)
+            is_active = False
+            for ext in ALLOWED_EXTENSIONS:
+                job_info = get_job_by_filename(item + ext)
+                if job_info and job_info.get("status") in _active_statuses:
+                    is_active = True
+                    break
+            if is_active:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            log.info("cleaned_up_stale_temp", path=path)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -176,13 +187,7 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
     try:
         results, segments = await run_pipeline_phase1(job, settings)
         
-        # Kiểm tra xem có lỗi ở bước nào không
-        success = True
-        for stage, r in results.items():
-            if not r.success:
-                success = False
-                
-        critical_stages = {"audio_separate", "transcribe", "translate"}
+        critical_stages = {"audio_separate", "transcribe", "translate", "video_ocr"}
         success = all(
             results[s].success for s in critical_stages if s in results
         )

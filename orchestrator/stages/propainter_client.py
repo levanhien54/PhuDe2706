@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import asyncio
 from orchestrator.logger import get_logger
@@ -23,7 +24,7 @@ async def run_propainter_inference(
     os.makedirs(temp_out_dir, exist_ok=True)
 
     cmd = [
-        "python", inference_script,
+        sys.executable, inference_script,
         "--video", video_path,
         "--mask", mask_path,
         "--output", temp_out_dir

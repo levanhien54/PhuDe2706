@@ -47,18 +47,18 @@ $IsOffline = Test-Path $OfflineDir
 
 if ($IsOffline) {
     Write-Host "Phát hiện thư mục offline_wheels, kích hoạt chế độ Cài đặt Offline (Siêu tốc)..." -ForegroundColor Yellow
-    $PipArgs = "--no-index --find-links=$OfflineDir"
+    $PipArgs = @('--no-index', "--find-links=$OfflineDir")
 } else {
-    $PipArgs = ""
+    $PipArgs = @()
 }
 
 # Cập nhật pip
-& $PythonExe -m pip install $PipArgs --upgrade pip
+& $PythonExe -m pip install @PipArgs --upgrade pip
 
 # 3. Cài đặt PyTorch với CUDA (mặc định cu118 để tương thích WhisperX)
 Write-Step "Cài đặt PyTorch (CUDA 11.8)"
 if ($IsOffline) {
-    & $PipExe install $PipArgs torch torchvision torchaudio
+    & $PipExe install @PipArgs torch torchvision torchaudio
 } else {
     & $PipExe install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 }
@@ -68,19 +68,19 @@ if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt PyTorch thất bại." }
 Write-Step "Cài đặt Backend Dependencies"
 
 # Orchestrator
-& $PipExe install $PipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
+& $PipExe install @PipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
 # WhisperX
-& $PipExe install $PipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
+& $PipExe install @PipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
 # TTS
-& $PipExe install $PipArgs -r "$ProjectRoot\tts-service\requirements.txt"
+& $PipExe install @PipArgs -r "$ProjectRoot\tts-service\requirements.txt"
 
 # Cài đặt Demucs cục bộ để hỗ trợ native
-& $PipExe install $PipArgs demucs
+& $PipExe install @PipArgs demucs
 
 # Cài đặt vLLM (Tuỳ chọn)
 Write-Step "Cài đặt vLLM (Tuỳ chọn - Thay thế Ollama)"
 Write-Host "Lưu ý: Trên Windows Native, cài đặt vLLM có thể gặp lỗi (đặc biệt liên quan đến flash-attn). Hệ thống sẽ tự dùng Ollama nếu vLLM không khả dụng." -ForegroundColor Yellow
-& $PipExe install $PipArgs vllm
+& $PipExe install @PipArgs vllm
 if ($LASTEXITCODE -ne 0) { 
     Write-Warn "Không thể cài đặt vLLM. Hãy đảm bảo dùng Ollama làm LLM_BACKEND." 
 } else {
@@ -89,12 +89,12 @@ if ($LASTEXITCODE -ne 0) {
 
 # Cài đặt thư viện cho ProPainter (Tuỳ chọn)
 Write-Step "Cài đặt phụ thuộc cho ProPainter"
-& $PipExe install $PipArgs einops scipy openmim
+& $PipExe install @PipArgs einops scipy openmim
 Write-Host "Đang cài đặt mmcv..."
 if ($IsOffline) {
-    & $PipExe install $PipArgs "mmcv>=2.0.0"
+    & $PipExe install @PipArgs "mmcv>=2.0.0"
 } else {
-    & $PipExe run mim install "mmcv>=2.0.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html
+    & $PythonExe -m mim install "mmcv>=2.0.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html
 }
 if ($LASTEXITCODE -ne 0) { 
     Write-Warn "Cài đặt mmcv thất bại. Tính năng ProPainter có thể không hoạt động." 
@@ -139,8 +139,8 @@ if (-not (Test-Path "$ProjectRoot\models\latentsync\scripts\inference.py")) {
     Write-Host "Đang tải mã nguồn LatentSync (Lip-Sync)..."
     git clone https://github.com/bytedance/LatentSync.git "$ProjectRoot\models\latentsync"
     # Cài đặt dependencies của LatentSync
-    & $PipExe install $PipArgs -r "$ProjectRoot\models\latentsync\requirements.txt"
-    & $PipExe install $PipArgs huggingface_hub diffusers
+    & $PipExe install @PipArgs -r "$ProjectRoot\models\latentsync\requirements.txt"
+    & $PipExe install @PipArgs huggingface_hub diffusers
 } else {
     Write-OK "Phát hiện mã nguồn LatentSync đã có sẵn (Offline/Cache), bỏ qua git clone."
 }

@@ -18,22 +18,24 @@ def job():
 
 
 @pytest.mark.asyncio
-async def test_run_translate_success(job):
+async def test_run_translate_success(job, tmp_path):
     settings = Settings(
         llm_backend="ollama",
         ollama_host="http://ollama-test:11434",
         llm_model="qwen2.5:14b",
         http_retries=1,
         http_timeout=5.0,
+        data_dir=str(tmp_path),
     )
+    (tmp_path / "temp" / "sample").mkdir(parents=True)
     vram = VRAMManager(settings)
     segments = [
         SrtSegment(start=0.0, end=2.0, text="Hello world"),
         SrtSegment(start=3.0, end=5.0, text="Good morning"),
     ]
     with respx.mock:
-        respx.post("http://ollama-test:11434/api/generate").mock(
-            return_value=httpx.Response(200, json={"response": '[{"id": 0, "translated": "Xin chào thế giới"}, {"id": 1, "translated": "Chào buổi sáng"}]'})
+        respx.post("http://ollama-test:11434/api/chat").mock(
+            return_value=httpx.Response(200, json={"message": {"content": '[{"id": 0, "translated": "Xin chào thế giới"}, {"id": 1, "translated": "Chào buổi sáng"}]'}})
         )
         result, translated = await run_translate(job, segments, settings, vram)
     assert result.success is True

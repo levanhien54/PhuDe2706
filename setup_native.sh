@@ -64,7 +64,7 @@ $PIP_EXE install demucs
 echo -e "\n\033[1;36m==> Cài đặt phụ thuộc cho ProPainter\033[0m"
 "$PIP_EXE" install einops scipy openmim
 echo "Đang cài đặt mmcv qua openmim..."
-"$PIP_EXE" run mim install "mmcv>=2.0.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html || echo -e "\033[1;33mCảnh báo: Cài đặt mmcv thất bại.\033[0m"
+"$PYTHON_EXE" -m mim install "mmcv>=2.0.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html || echo -e "\033[1;33mCảnh báo: Cài đặt mmcv thất bại.\033[0m"
 
 # Cài đặt vLLM (Tuỳ chọn - Thay thế Ollama)
 step "Cài đặt vLLM (Tuỳ chọn - Thay thế Ollama)"

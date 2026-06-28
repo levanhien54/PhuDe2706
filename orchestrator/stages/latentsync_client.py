@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import asyncio
 from orchestrator.config import Settings
@@ -28,7 +29,7 @@ async def run_latentsync_inference(video_path: str, audio_path: str, output_path
     config_path = os.path.join(latentsync_dir, "configs", "unet", "second_stage.yaml")
     
     cmd = [
-        "python", "-m", "scripts.inference",
+        sys.executable, "-m", "scripts.inference",
         "--unet_config_path", config_path,
         "--inference_ckpt_path", ckpt_path,
         "--video_path", video_path,

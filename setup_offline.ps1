@@ -32,28 +32,28 @@ $PipExe = "$ProjectRoot\venv\Scripts\pip.exe"
 # 2. Cài đặt các thư viện từ thư mục Offline Wheels
 Write-Step "Cài đặt Backend từ Offline Wheels (Siêu Tốc)"
 
-$BasePipArgs = "--no-index --find-links $OfflineDir"
+$BasePipArgs = @('--no-index', "--find-links=$OfflineDir")
 
 # PyTorch
 Write-Host "Cài đặt PyTorch..."
-& $PipExe install $BasePipArgs torch torchvision torchaudio
+& $PipExe install @BasePipArgs torch torchvision torchaudio
 
 # Dịch vụ
 Write-Host "Cài đặt Orchestrator..."
-& $PipExe install $BasePipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
+& $PipExe install @BasePipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
 Write-Host "Cài đặt WhisperX..."
-& $PipExe install $BasePipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
+& $PipExe install @BasePipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
 Write-Host "Cài đặt TTS..."
-& $PipExe install $BasePipArgs -r "$ProjectRoot\tts-service\requirements.txt"
+& $PipExe install @BasePipArgs -r "$ProjectRoot\tts-service\requirements.txt"
 
 # Phụ thuộc khác
 Write-Host "Cài đặt các gói phụ thuộc mở rộng..."
-& $PipExe install $BasePipArgs demucs vllm einops scipy huggingface_hub diffusers
+& $PipExe install @BasePipArgs demucs vllm einops scipy huggingface_hub diffusers
 
 # LatentSync
 if (Test-Path "$ProjectRoot\models\latentsync\requirements.txt") {
     Write-Host "Cài đặt phụ thuộc LatentSync..."
-    & $PipExe install $BasePipArgs -r "$ProjectRoot\models\latentsync\requirements.txt"
+    & $PipExe install @BasePipArgs -r "$ProjectRoot\models\latentsync\requirements.txt"
 }
 
 Write-OK "Đã cài đặt xong thư viện Backend."

@@ -16,8 +16,8 @@ def settings_ollama():
 async def test_translate_batch_ollama(settings_ollama):
     segments = [SrtSegment(start=0.0, end=2.0, text="Hello world")]
     with respx.mock:
-        respx.post("http://ollama-test:11434/api/generate").mock(
-            return_value=httpx.Response(200, json={"response": "Xin chào thế giới"})
+        respx.post("http://ollama-test:11434/api/chat").mock(
+            return_value=httpx.Response(200, json={"message": {"content": '[{"id": 0, "translated": "Xin chào thế giới"}]'}})
         )
         client = LLMClient(settings_ollama)
         result = await client.translate_batch(segments, target_lang="vi")

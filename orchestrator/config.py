@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     http_retries: int = Field(3, validation_alias="HTTP_RETRIES")
     ocr_fps: float = Field(2.0, validation_alias="OCR_FPS")
     tts_max_ratio: float = Field(1.5, validation_alias="TTS_MAX_RATIO")
+    ocr_batch_size: int = Field(4, validation_alias="OCR_BATCH_SIZE")
 
     model_config = {
         "env_file": ".env",

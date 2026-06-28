@@ -22,3 +22,14 @@ def test_llm_backend_vllm(monkeypatch):
     s = Settings()
     assert s.llm_backend == "vllm"
     assert s.vllm_host == "http://vllm:8080"
+
+
+def test_ocr_batch_size_default():
+    s = Settings()
+    assert s.ocr_batch_size == 4
+
+
+def test_ocr_batch_size_override(monkeypatch):
+    monkeypatch.setenv("OCR_BATCH_SIZE", "8")
+    s = Settings()
+    assert s.ocr_batch_size == 8

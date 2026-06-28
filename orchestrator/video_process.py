@@ -9,6 +9,22 @@ import tempfile
 import numpy as np
 from paddleocr import PaddleOCR
 
+# --- NVENC caching ---
+_NVENC_AVAILABLE: bool | None = None
+
+def _check_nvenc_cached() -> bool:
+    global _NVENC_AVAILABLE
+    if _NVENC_AVAILABLE is None:
+        try:
+            res = subprocess.run(
+                ['ffmpeg', '-hide_banner', '-encoders'],
+                capture_output=True, text=True
+            )
+            _NVENC_AVAILABLE = 'h264_nvenc' in res.stdout
+        except Exception:
+            _NVENC_AVAILABLE = False
+    return _NVENC_AVAILABLE
+
 # --- Opt 7: Threading lock for OCR singleton (multi-job safety) ---
 _ocr_lock = _threading.Lock()
 _ocr_instance = None
@@ -150,12 +166,20 @@ def apply_inpaint_to_frame(frame, boxes, mask_only=False):
     return res
 
 
-def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bool = False):
+def remove_watermark_from_video(
+    input_path: str,
+    output_path: str,
+    mask_only: bool = False,
+    settings=None,
+):
     """
     Tự động phát hiện và xóa toàn bộ chữ động trong video.
     Quét OCR 2 lần mỗi giây (detection-only), inpaint các vùng phát hiện.
     Optimizations: det-only OCR, downscale, static boxes, inpaint, threading, FFV1, lock.
     """
+    _ocr_fps = settings.ocr_fps if settings is not None else 2.0
+    _ocr_batch_size = settings.ocr_batch_size if settings is not None else 4
+
     print(f"[VideoProcess] Bắt đầu xử lý xóa chữ động cho: {input_path}")
 
     cap = cv2.VideoCapture(input_path)
@@ -189,17 +213,10 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
     # Rewind main cap to start
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    def check_nvenc():
-        try:
-            res = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True)
-            return 'h264_nvenc' in res.stdout
-        except Exception:
-            return False
-
     class FFmpegWriter:
         def __init__(self, path, w, h, f, lossless):
             self.path = path
-            codec = 'h264_nvenc' if check_nvenc() else 'libx264'
+            codec = 'h264_nvenc' if _check_nvenc_cached() else 'libx264'
             cmd = [
                 'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
                 '-s', f'{w}x{h}', '-pix_fmt', 'bgr24', '-r', str(f),
@@ -235,9 +252,7 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
         cap.release()
         raise RuntimeError(f"Failed to open FFmpegWriter at {output_path}")
 
-    ocr_fps = 2.0
-
-    print(f"[VideoProcess] Tổng số frame: {total_frames}, Quét OCR mỗi {max(1, int(fps / ocr_fps))} frames.")
+    print(f"[VideoProcess] Tổng số frame: {total_frames}, Quét OCR mỗi {max(1, int(fps / _ocr_fps))} frames.")
 
     # --- Opt 5: Threading pipeline with dual queues ---
     QUEUE_SIZE = 16
@@ -263,7 +278,7 @@ def remove_watermark_from_video(input_path: str, output_path: str, mask_only: bo
 
     def ocr_thread():
         try:
-            frame_skip = max(1, int(fps / ocr_fps))
+            frame_skip = max(1, int(fps / _ocr_fps))
             cached = []
             idx = 0
             while True:

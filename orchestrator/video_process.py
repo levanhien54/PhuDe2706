@@ -126,6 +126,40 @@ def _detect_static_boxes(cap, ocr, fps, width, height):
     return static
 
 
+def build_temporal_reference(input_path: str, n_samples: int = 20) -> np.ndarray | None:
+    """Sample n_samples frames đều toàn video, tính median → clean background."""
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        return None
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames < 3:
+        cap.release()
+        return None
+
+    n = min(n_samples, total_frames)
+    if n < 2:
+        cap.release()
+        return None
+
+    indices = [int(i * (total_frames - 1) / (n - 1)) for i in range(n)]
+
+    frames = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            frames.append(frame)
+
+    cap.release()
+
+    if len(frames) < 3:
+        return None
+
+    stack = np.stack(frames, axis=0).astype(np.float32)
+    return np.median(stack, axis=0).astype(np.uint8)
+
+
 # --- Opt 4: cv2.inpaint instead of GaussianBlur ---
 def apply_inpaint_to_frame(frame, boxes, mask_only=False):
     """Inpaint text regions using TELEA algorithm on localized crops for massive speedup, or return mask."""

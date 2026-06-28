@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Dubbing</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      border-radius: 16px;
+      overflow: hidden;
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+
+    .logo {
+      font-size: 56px;
+      margin-bottom: 16px;
+      filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.6));
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.08); }
+    }
+
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+
+    .tagline {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 36px;
+      letter-spacing: 0.5px;
+    }
+
+    .progress-track {
+      width: 240px;
+      height: 4px;
+      background: #1e293b;
+      border-radius: 99px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 30%;
+      background: linear-gradient(90deg, #6366f1, #a78bfa);
+      border-radius: 99px;
+      animation: slide 1.8s ease-in-out infinite;
+    }
+
+    @keyframes slide {
+      0%   { transform: translateX(-100%); }
+      50%  { transform: translateX(250%); }
+      100% { transform: translateX(250%); }
+    }
+
+    .status {
+      font-size: 12px;
+      color: #475569;
+      min-height: 18px;
+      transition: opacity 0.3s;
+    }
+
+    .dots::after {
+      content: '';
+      animation: dots 1.5s steps(4, end) infinite;
+    }
+
+    @keyframes dots {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+    }
+
+    .version {
+      position: absolute;
+      bottom: 16px;
+      font-size: 10px;
+      color: #334155;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">🎬</div>
+  <h1>Video Dubbing</h1>
+  <p class="tagline">AI-Powered Video Dubbing System</p>
+  <div class="progress-track">
+    <div class="progress-bar"></div>
+  </div>
+  <p class="status" id="status">Đang khởi động dịch vụ<span class="dots"></span></p>
+  <p class="version">v1.0.0</p>
+
+  <script>
+    const messages = [
+      'Khởi động Orchestrator',
+      'Tải WhisperX (nhận diện giọng nói)',
+      'Tải TTS Service (tổng hợp giọng nói)',
+      'Kiểm tra kết nối GPU',
+      'Chuẩn bị giao diện',
+      'Sắp xong rồi',
+    ];
+    let idx = 0;
+    const el = document.getElementById('status');
+    function next() {
+      el.textContent = messages[idx % messages.length];
+      const dots = document.createElement('span');
+      dots.className = 'dots';
+      el.appendChild(dots);
+      idx++;
+    }
+    next();
+    setInterval(next, 4000);
+  </script>
+</body>
+</html>

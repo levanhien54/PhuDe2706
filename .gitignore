@@ -21,3 +21,9 @@ frontend/node_modules/
 # input videos (keep dir only)
 data/input/*
 !data/input/.gitkeep
+
+# Electron build outputs
+dist-electron/
+node_modules/
+VideoDubbing.exe
+frontend/dist/

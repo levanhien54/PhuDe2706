@@ -1,0 +1,53 @@
+{
+  "name": "video-dubbing-app",
+  "version": "1.0.0",
+  "description": "AI-Powered Video Dubbing Desktop Application",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "electron:dev": "electron .",
+    "electron:build": "electron-builder --win portable",
+    "electron:build:installer": "electron-builder --win nsis",
+    "build:frontend": "cd frontend && npm run build",
+    "build": "npm run build:frontend && npm run electron:build"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.videodubbing.app",
+    "productName": "Video Dubbing",
+    "copyright": "Copyright © 2025 Video Dubbing",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "electron"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "!**/node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "requestedExecutionLevel": "requireAdministrator",
+      "artifactName": "${productName}.exe"
+    },
+    "portable": {
+      "artifactName": "${productName}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Video Dubbing",
+      "artifactName": "${productName}-Setup.exe"
+    }
+  }
+}

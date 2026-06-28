@@ -34,11 +34,11 @@ async def run_video_ocr(
             if settings.enable_propainter:
                 mask_video = os.path.join(temp_dir, "mask.mp4")
                 # Generate mask only
-                await asyncio.to_thread(remove_watermark_from_video, input_video, mask_video, True)
-                
+                await asyncio.to_thread(remove_watermark_from_video, input_video, mask_video, True, settings)
+
                 # Release paddleocr before running propainter to save VRAM
             else:
-                await asyncio.to_thread(remove_watermark_from_video, input_video, output_video, False)
+                await asyncio.to_thread(remove_watermark_from_video, input_video, output_video, False, settings)
 
         if settings.enable_propainter:
             propainter_dir = os.path.join(os.path.dirname(settings.data_dir), "models", "propainter")

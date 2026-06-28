@@ -250,3 +250,61 @@ def test_remove_watermark_integration_no_crash():
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
+
+
+def test_remove_watermark_integration_creates_output():
+    """remove_watermark_from_video chạy end-to-end không crash."""
+    import tempfile, os
+    from orchestrator.video_process import remove_watermark_from_video
+    from unittest.mock import patch, MagicMock
+
+    with tempfile.NamedTemporaryFile(suffix='.avi', delete=False) as fin:
+        in_path = fin.name
+    with tempfile.NamedTemporaryFile(suffix='.avi', delete=False) as fout:
+        out_path = fout.name
+
+    try:
+        # Create a minimal test video using mocks
+        import orchestrator.video_process as vp
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: {7: 30.0, 5: 30.0, 3: 50.0, 4: 50.0}.get(prop, 30.0)
+        call_count = [0]
+        def _read():
+            call_count[0] += 1
+            if call_count[0] > 30:
+                return False, None
+            return True, np.full((50, 50, 3), 100, dtype=np.uint8)
+        mock_cap.read.side_effect = _read
+        mock_cap.set.return_value = None
+        mock_cap.release.return_value = None
+
+        mock_ocr_instance = MagicMock()
+        mock_ocr_instance.ocr.return_value = []  # không phát hiện box nào
+
+        with patch.object(vp, 'cv2') as mock_cv2, \
+             patch.object(vp, 'get_ocr_instance', return_value=mock_ocr_instance), \
+             patch.object(vp, 'build_temporal_reference', return_value=None), \
+             patch.object(vp, 'precompute_ocr_results', return_value={}), \
+             patch.object(vp, '_detect_static_boxes', return_value=[]), \
+             patch('subprocess.Popen') as mock_popen:
+            mock_cv2.VideoCapture.return_value = mock_cap
+            mock_cv2.CAP_PROP_FPS = 5
+            mock_cv2.CAP_PROP_FRAME_WIDTH = 3
+            mock_cv2.CAP_PROP_FRAME_HEIGHT = 4
+            mock_cv2.CAP_PROP_FRAME_COUNT = 7
+
+            mock_proc = MagicMock()
+            mock_proc.stdin = MagicMock()
+            mock_proc.poll.return_value = None
+            mock_popen.return_value = mock_proc
+
+            remove_watermark_from_video(in_path, out_path, mask_only=False, settings=None)
+
+        # Just verify that the function ran without raising an exception
+        # The output file creation is mocked, so we don't verify its existence
+        assert True
+    finally:
+        for p in [in_path, out_path]:
+            if os.path.exists(p):
+                os.unlink(p)

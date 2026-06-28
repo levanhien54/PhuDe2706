@@ -54,6 +54,31 @@ async def run_pipeline_phase1(job: PipelineJob, settings: Settings) -> tuple[dic
     clear_job_context()
     return results, translated_segments
 
+async def unload_all_models(settings: Settings):
+    import httpx
+    log.info("triggering_gpu_unload", msg="Freeing VRAM for heavy tasks...")
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        # Unload WhisperX
+        try:
+            await client.post(f"{settings.whisperx_host}/unload")
+        except Exception as e:
+            log.warning("whisperx_unload_failed", error=str(e))
+            
+        # Unload TTS
+        try:
+            await client.post(f"{settings.tts_host}/unload")
+        except Exception as e:
+            log.warning("tts_unload_failed", error=str(e))
+            
+        # Unload Ollama (by sending keep_alive=0)
+        if settings.llm_backend == "ollama":
+            try:
+                await client.post(
+                    f"{settings.ollama_host}/api/generate",
+                    json={"model": settings.llm_model, "keep_alive": 0}
+                )
+            except Exception as e:
+                log.warning("ollama_unload_failed", error=str(e))
 
 async def run_pipeline_phase2(job: PipelineJob, segments: list[SrtSegment], settings: Settings) -> dict[str, StageResult]:
     bind_job_context(job.job_id, job.filename)
@@ -75,6 +100,10 @@ async def run_pipeline_phase2(job: PipelineJob, segments: list[SrtSegment], sett
     temp_dir = os.path.join(settings.data_dir, "temp", job.base_name)
 
     if settings.enable_lipsync:
+        # Tối ưu giải phóng GPU (Dynamic GPU Offloading) cho LatentSync (cần 8GB VRAM)
+        if settings.vram_profile == "16gb":
+            await unload_all_models(settings)
+            
         lipsync_result = await run_lip_sync(job, settings, vram)
         results["lip_sync"] = lipsync_result
         video_source = (

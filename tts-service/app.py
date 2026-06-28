@@ -85,6 +85,19 @@ def health():
         "integration_import_ok": _import_ok,
     }
 
+@app.post("/unload")
+def unload():
+    # Attempt to unload models and clear cache
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            log.info("CUDA cache cleared for TTS.")
+    except Exception as e:
+        log.warning("Failed to clear TTS CUDA cache: %s", e)
+        
+    return {"status": "unloaded"}
+
 
 def synthesize_wav(text, text_language, refer_wav_path, output_path, prompt_text, prompt_language):
     """

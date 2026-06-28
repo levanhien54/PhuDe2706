@@ -92,6 +92,20 @@ def health():
         "diarization": bool(HF_TOKEN),
     }
 
+@app.post("/unload")
+def unload():
+    global _model, _align_cache, _diarize_model
+    _model = None
+    _align_cache.clear()
+    _diarize_model = None
+    
+    if DEVICE == "cuda":
+        import torch
+        torch.cuda.empty_cache()
+        log.info("Models unloaded and CUDA cache cleared.")
+        
+    return {"status": "unloaded"}
+
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):

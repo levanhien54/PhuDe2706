@@ -3,6 +3,8 @@
 # Mô tả: Thu thập toàn bộ các file wheel của Python để chuẩn bị cho setup offline
 # =============================================================================
 
+$ErrorActionPreference = "Stop"
+
 $ProjectRoot = $PSScriptRoot
 Set-Location $ProjectRoot
 
@@ -10,7 +12,6 @@ function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Fail($msg) { Write-Host "  [XX] $msg" -ForegroundColor Red; exit 1 }
 
-# Đảm bảo venv đang hoạt động và có sẵn pip
 $PipExe = "$ProjectRoot\venv\Scripts\pip.exe"
 if (-not (Test-Path $PipExe)) {
     Write-Fail "Không tìm thấy venv nội bộ. Hãy chạy setup_native.ps1 trên máy này trước khi đóng gói!"
@@ -33,10 +34,10 @@ Write-Step "Tải Backend Dependencies..."
 Write-Step "Tải MMCV Wheel..."
 & $PipExe download "mmcv>=2.0.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html -d $OfflineDir
 
-
 if (Test-Path "$ProjectRoot\models\latentsync\requirements.txt") {
+    Write-Step "Tải LatentSync Dependencies..."
     & $PipExe download -r "$ProjectRoot\models\latentsync\requirements.txt" -d $OfflineDir
 }
 
 Write-OK "Thu thập Python wheels thành công tại $OfflineDir!"
-Write-Host "Bây giờ bạn có thể nén thư mục dự án này (BỎ QUA thư mục venv, data/input, data/output) để copy sang máy chủ mới." -ForegroundColor Yellow
+Write-Host "Bây giờ bạn có thể nén thư mục dự án này (BỎ QUA thư mục venv, data/input, data/output, data/temp) để copy sang máy chủ mới." -ForegroundColor Yellow

@@ -234,6 +234,7 @@ def test_remove_watermark_integration_no_crash():
              patch.object(vp, 'build_temporal_reference', return_value=None), \
              patch.object(vp, 'precompute_ocr_results', return_value={}), \
              patch.object(vp, '_detect_static_boxes', return_value=[]), \
+             patch.object(vp, '_has_dynamic_text', return_value=False), \
              patch.object(vp, '_check_nvenc_cached', return_value=False), \
              patch('subprocess.Popen') as mock_popen:
             mock_cv2.VideoCapture.return_value = mock_cap
@@ -290,6 +291,7 @@ def test_remove_watermark_integration_creates_output():
              patch.object(vp, 'build_temporal_reference', return_value=None), \
              patch.object(vp, 'precompute_ocr_results', return_value={}), \
              patch.object(vp, '_detect_static_boxes', return_value=[]), \
+             patch.object(vp, '_has_dynamic_text', return_value=False), \
              patch.object(vp, '_check_nvenc_cached', return_value=False), \
              patch('subprocess.Popen') as mock_popen:
             mock_cv2.VideoCapture.return_value = mock_cap

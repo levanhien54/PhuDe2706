@@ -21,6 +21,7 @@ class PipelineJob(BaseModel):
     base_name: str
     vram_profile: str = "16gb"
     target_language: str = "Tiếng Việt"
+    target_style: str = "Tiêu chuẩn"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -30,3 +31,7 @@ class StageResult(BaseModel):
     output_path: Optional[str] = None
     error: Optional[str] = None
     duration_seconds: float = 0.0
+
+    def summary(self) -> dict:
+        """Compact dict persisted in the job 'results' JSON and read by the frontend."""
+        return {"success": self.success, "duration": self.duration_seconds, "error": self.error}

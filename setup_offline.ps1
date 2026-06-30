@@ -41,10 +41,13 @@ Write-Host "Cài đặt PyTorch..."
 # Dịch vụ
 Write-Host "Cài đặt Orchestrator..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
-Write-Host "Cài đặt WhisperX..."
+Write-Host "Cài đặt WhisperX (engine từ sdist đã đóng gói, không dùng git)..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
+& $PipExe install @BasePipArgs --pre whisperx
 Write-Host "Cài đặt TTS..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\tts-service\requirements.txt"
+Write-Host "Cài đặt OmniVoice (engine mặc định)..."
+& $PipExe install @BasePipArgs -r "$ProjectRoot\omnivoice-service\requirements.txt"
 
 # Phụ thuộc khác
 Write-Host "Cài đặt các gói phụ thuộc mở rộng..."
@@ -75,4 +78,12 @@ if ($LASTEXITCODE -ne 0) { Write-Fail "Lỗi khi chạy npm install." }
 Set-Location $ProjectRoot
 
 Write-Step "OFFLINE SETUP HOÀN TẤT!"
-Write-Host "Bạn đã cài đặt siêu tốc thành công! Chạy .\run_native.ps1 để khởi động hệ thống." -ForegroundColor Green
+Write-Host "Cài đặt thư viện siêu tốc thành công!" -ForegroundColor Green
+Write-Host ""
+Write-Host "LƯU Ý QUAN TRỌNG VỀ OLLAMA (LLM DỊCH THUẬT):" -ForegroundColor Yellow
+Write-Host "Hệ thống cần Ollama để chạy mô hình dịch thuật Qwen2.5."
+Write-Host "1. Tải và cài đặt Ollama từ: https://ollama.com/download/OllamaSetup.exe"
+Write-Host "2. Tắt hẳn ứng dụng Ollama ở thanh Taskbar (góc dưới bên phải màn hình)."
+Write-Host "3. Chạy script .\run_native.ps1 - Hệ thống sẽ tự động liên kết với model đã tải sẵn."
+Write-Host ""
+Write-Host "==> Hãy chạy: .\run_native.ps1 để khởi động toàn bộ hệ thống!" -ForegroundColor Cyan

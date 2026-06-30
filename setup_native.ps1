@@ -12,22 +12,70 @@ function Write-Fail($msg) { Write-Host "  [XX] $msg" -ForegroundColor Red; exit 
 function Write-Warn($msg) { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
 
 # 1. Kiểm tra yêu cầu hệ thống
-Write-Step "Kiểm tra yêu cầu hệ thống"
+Write-Step "Kiểm tra yêu cầu hệ thống (Pre-flight Checks)"
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Fail "Không tìm thấy Python. Vui lòng cài đặt Python 3.10 hoặc cao hơn và thêm vào PATH."
+# 1.1 OS Architecture
+if ([Environment]::Is64BitOperatingSystem -eq $false) {
+    Write-Fail "Hệ điều hành của bạn không phải 64-bit. Hệ thống yêu cầu Windows 64-bit."
 }
-Write-OK "Python found."
+Write-OK "OS Architecture: 64-bit"
 
+# 1.2 Python Version
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Fail "Không tìm thấy Python. Vui lòng cài đặt Python 3.10.x và thêm vào PATH."
+}
+$pyVersion = & python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+if ([version]$pyVersion -lt [version]"3.10") {
+    Write-Fail "Phiên bản Python hiện tại là $pyVersion. Hệ thống yêu cầu Python >= 3.10."
+}
+Write-OK "Python found: v$pyVersion"
+
+# 1.3 Node.js
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Fail "Không tìm thấy Node.js. Vui lòng cài đặt Node.js để chạy Frontend."
 }
 Write-OK "Node.js found."
 
+# 1.4 FFmpeg
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Fail "Không tìm thấy FFmpeg. Vui lòng cài đặt và thêm FFmpeg vào PATH."
 }
 Write-OK "FFmpeg found."
+
+# 1.5 Git
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Fail "Không tìm thấy Git. Vui lòng cài đặt Git và thêm vào PATH để tải mã nguồn."
+}
+Write-OK "Git found."
+
+# 1.6 NVIDIA GPU Check
+if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+    Write-Fail "Không tìm thấy NVIDIA GPU (hoặc nvidia-smi không nằm trong PATH). Dự án này bắt buộc yêu cầu Card đồ họa NVIDIA có hỗ trợ CUDA để chạy các mô hình AI."
+}
+$gpuInfo = & nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($gpuInfo)) {
+    Write-Fail "Lỗi khi kiểm tra thông tin GPU NVIDIA."
+}
+$gpuInfo = $gpuInfo.Trim()
+Write-OK "NVIDIA GPU found: $gpuInfo"
+
+try {
+    $vramStr = ($gpuInfo -split ',')[1].Trim().Replace(" MiB", "")
+    $vramMB = [int]$vramStr
+    if ($vramMB -lt 8000) {
+        Write-Warn "GPU của bạn có $vramMB MB VRAM (< 8GB). Hệ thống vẫn cho phép cài đặt, nhưng một số tính năng nặng có thể báo lỗi hết bộ nhớ (OOM)."
+    }
+} catch {}
+
+# 1.7 Disk Space Check
+$driveName = (Get-Location).Drive.Name
+$drive = Get-PSDrive -Name $driveName
+$freeSpaceGB = [math]::Round($drive.Free / 1GB, 2)
+if ($freeSpaceGB -lt 20) {
+    Write-Warn "Ổ đĩa ${driveName}: chỉ còn $freeSpaceGB GB trống. Đề xuất có ít nhất 20GB trống để chứa các trọng số AI."
+} else {
+    Write-OK "Disk space OK: $freeSpaceGB GB trống trên ${driveName}:"
+}
 
 # 2. Thiết lập Môi trường Python (venv)
 Write-Step "Thiết lập Python Virtual Environment"
@@ -64,15 +112,25 @@ if ($IsOffline) {
 }
 if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt PyTorch thất bại." }
 
+# OCR text-detection backend = EasyOCR (CRAFT, pure PyTorch on GPU) — installed via
+# orchestrator/requirements.txt. No paddlepaddle needed (it required the broken cuDNN 8).
+
 # 4. Cài đặt các thư viện hệ thống
 Write-Step "Cài đặt Backend Dependencies"
 
 # Orchestrator
 & $PipExe install @PipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
-# WhisperX
+# WhisperX framework deps + engine (git HEAD online; bundled sdist offline)
 & $PipExe install @PipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
-# TTS
+if ($IsOffline) {
+    & $PipExe install @PipArgs --pre whisperx
+} else {
+    & $PipExe install git+https://github.com/m-bain/whisperx.git
+}
+# TTS (GPT-SoVITS adapter)
 & $PipExe install @PipArgs -r "$ProjectRoot\tts-service\requirements.txt"
+# OmniVoice (engine TTS mặc định)
+& $PipExe install @PipArgs -r "$ProjectRoot\omnivoice-service\requirements.txt"
 
 # Cài đặt Demucs cục bộ để hỗ trợ native
 & $PipExe install @PipArgs demucs
@@ -161,6 +219,68 @@ Write-OK "Đã kiểm tra weights LatentSync."
 Write-Host "Kích hoạt tải trước mô hình htdemucs_ft..."
 & $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft')"
 Write-OK "Đã tải htdemucs_ft."
+
+# Tải trước WhisperX model (~3 GB cho large-v3)
+Write-Step "Tải trước mô hình WhisperX (large-v3, ~3GB)"
+$whisperModel = if ($env:WHISPER_MODEL) { $env:WHISPER_MODEL } else { "large-v3" }
+$whisper_dl_script = @"
+import os, sys
+model_name = r'$whisperModel'
+model_dir  = os.path.join(r'$ProjectRoot', 'models', 'whisper')
+os.makedirs(model_dir, exist_ok=True)
+print(f'Downloading WhisperX model [{model_name}] to {model_dir} ...')
+try:
+    import whisperx
+    m = whisperx.load_model(model_name, 'cpu', compute_type='int8', download_root=model_dir)
+    del m
+    print('WhisperX model ready.')
+except Exception as e:
+    print(f'Canh bao: Khong the tai WhisperX model: {e}', file=sys.stderr)
+    print('Model se duoc tai tu dong lan dau su dung.', file=sys.stderr)
+"@
+& $PythonExe -c $whisper_dl_script
+if ($LASTEXITCODE -ne 0) {
+    Write-Warn "Không thể tải trước WhisperX model. Model sẽ tự tải khi sử dụng lần đầu."
+} else {
+    Write-OK "Đã tải WhisperX model."
+}
+
+# Tải GPT-SoVITS pretrained models
+Write-Step "Kiểm tra và tải GPT-SoVITS Pretrained Models"
+$gptSoVitsPretrainedDir = "$ProjectRoot\GPT-SoVITS\GPT_SoVITS\pretrained_models"
+if (-not (Test-Path "$gptSoVitsPretrainedDir\chinese-roberta-wwm-ext-large")) {
+    Write-Host "Đang tải GPT-SoVITS Pretrained Models (sẽ tốn thời gian)..." -ForegroundColor Yellow
+    $gpt_script = @"
+import os
+import urllib.request
+import zipfile
+
+def dl(url, path):
+    if not os.path.exists(path):
+        print(f'Downloading {os.path.basename(path)}...')
+        try:
+            urllib.request.urlretrieve(url, path)
+        except Exception as e:
+            print(f'Lỗi khi tải {path}: {e}')
+
+zip_path = os.path.join(r'$ProjectRoot', 'GPT-SoVITS', 'pretrained_models.zip')
+dl('https://huggingface.co/lj1995/GPT-SoVITS/resolve/main/pretrained_models.zip', zip_path)
+
+if os.path.exists(zip_path):
+    print('Extracting pretrained models...')
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(os.path.join(r'$ProjectRoot', 'GPT-SoVITS'))
+    os.remove(zip_path)
+"@
+    & $PythonExe -c $gpt_script
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Không thể tải GPT-SoVITS Pretrained Models. TTS có thể không hoạt động."
+    } else {
+        Write-OK "Đã tải GPT-SoVITS Pretrained Models."
+    }
+} else {
+    Write-OK "GPT-SoVITS Pretrained Models đã tồn tại."
+}
 
 if (-not (Test-Path "$ProjectRoot\.env")) {
     Copy-Item "$ProjectRoot\orchestrator\.env.example" "$ProjectRoot\.env"

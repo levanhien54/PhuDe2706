@@ -45,7 +45,7 @@ TTS_PID=$!
 # 3. Start Orchestrator
 echo "  -> Đang bật Orchestrator (Port 8000)..."
 cd "$PROJECT_ROOT"
-nohup $PYTHON_EXE -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 8000 > orchestrator.log 2>&1 &
+nohup $PYTHON_EXE -m uvicorn orchestrator.api:app --host 127.0.0.1 --port 8000 > orchestrator.log 2>&1 &
 ORCH_PID=$!
 
 # 4. Start vLLM (nếu dùng vllm)

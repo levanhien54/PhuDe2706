@@ -22,8 +22,45 @@ frontend/node_modules/
 data/input/*
 !data/input/.gitkeep
 
+# runtime DBs + stray test media/scripts in data/ root (never commit — contain job state/PII)
+data/*.db
+data/*.mp4
+data/*.wav
+data/*.mp3
+data/*.txt
+data/test_*.py
+
 # Electron build outputs
 dist-electron/
 node_modules/
 VideoDubbing.exe
 frontend/dist/
+
+# --- Large binaries / vendored runtimes / build artifacts (never commit) ---
+"Video Dubbing.exe"
+*.exe
+*.dll
+*.pak
+*.bin
+*.rar
+*.zip
+*.7z
+icudtl.dat
+locales/
+resources/
+vk_swiftshader_icd.json
+LICENSE.electron.txt
+LICENSES.chromium.html
+ffmpeg_extracted/
+ffmpeg-shared/
+
+# Vendored alternate-TTS engine (installed separately, large)
+GPT-SoVITS/
+
+# Embedded Python runtime + staged install bundle
+python-runtime/
+
+# Local agent settings + scratch / test artifacts
+.claude/
+_ocr_verify/
+ab_compare/

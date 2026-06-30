@@ -4,6 +4,13 @@ import sys
 
 
 def setup_logging(log_level: str = "INFO") -> None:
+    # Force UTF-8 on Windows
+    if sys.platform == "win32":
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+
     # Setup RotatingFileHandler
     import logging.handlers
     import os

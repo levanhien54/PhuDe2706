@@ -1,0 +1,158 @@
+{
+  "voices": [
+    {
+      "id": "vi_hoaimy_f",
+      "name": "Hoài My",
+      "country": "Việt Nam",
+      "flag": "🇻🇳",
+      "lang": "vi",
+      "gender": "Nữ",
+      "file": "vi_hoaimy_f.wav",
+      "ref_text": "Xin chào quý vị và các bạn. Đây là giọng đọc dùng để lồng tiếng cho video. Rất mong nhận được sự ủng hộ của mọi người.",
+      "source": "vi-VN-HoaiMyNeural"
+    },
+    {
+      "id": "vi_namminh_m",
+      "name": "Nam Minh",
+      "country": "Việt Nam",
+      "flag": "🇻🇳",
+      "lang": "vi",
+      "gender": "Nam",
+      "file": "vi_namminh_m.wav",
+      "ref_text": "Xin chào quý vị và các bạn. Đây là giọng đọc dùng để lồng tiếng cho video. Rất mong nhận được sự ủng hộ của mọi người.",
+      "source": "vi-VN-NamMinhNeural"
+    },
+    {
+      "id": "en_us_aria_f",
+      "name": "Aria",
+      "country": "Mỹ",
+      "flag": "🇺🇸",
+      "lang": "en",
+      "gender": "Nữ",
+      "file": "en_us_aria_f.wav",
+      "ref_text": "Hello everyone, and welcome to the channel. This is a narrator voice used for dubbing videos. Thank you so much for watching.",
+      "source": "en-US-AriaNeural"
+    },
+    {
+      "id": "en_us_guy_m",
+      "name": "Guy",
+      "country": "Mỹ",
+      "flag": "🇺🇸",
+      "lang": "en",
+      "gender": "Nam",
+      "file": "en_us_guy_m.wav",
+      "ref_text": "Hello everyone, and welcome to the channel. This is a narrator voice used for dubbing videos. Thank you so much for watching.",
+      "source": "en-US-GuyNeural"
+    },
+    {
+      "id": "en_gb_sonia_f",
+      "name": "Sonia",
+      "country": "Anh",
+      "flag": "🇬🇧",
+      "lang": "en",
+      "gender": "Nữ",
+      "file": "en_gb_sonia_f.wav",
+      "ref_text": "Hello everyone, and welcome to the channel. This is a narrator voice used for dubbing videos. Thank you so much for watching.",
+      "source": "en-GB-SoniaNeural"
+    },
+    {
+      "id": "en_gb_ryan_m",
+      "name": "Ryan",
+      "country": "Anh",
+      "flag": "🇬🇧",
+      "lang": "en",
+      "gender": "Nam",
+      "file": "en_gb_ryan_m.wav",
+      "ref_text": "Hello everyone, and welcome to the channel. This is a narrator voice used for dubbing videos. Thank you so much for watching.",
+      "source": "en-GB-RyanNeural"
+    },
+    {
+      "id": "ja_nanami_f",
+      "name": "Nanami",
+      "country": "Nhật Bản",
+      "flag": "🇯🇵",
+      "lang": "ja",
+      "gender": "Nữ",
+      "file": "ja_nanami_f.wav",
+      "ref_text": "皆さん、こんにちは。これは動画の吹き替えに使うナレーションの声です。最後までご覧いただきありがとうございます。",
+      "source": "ja-JP-NanamiNeural"
+    },
+    {
+      "id": "ja_keita_m",
+      "name": "Keita",
+      "country": "Nhật Bản",
+      "flag": "🇯🇵",
+      "lang": "ja",
+      "gender": "Nam",
+      "file": "ja_keita_m.wav",
+      "ref_text": "皆さん、こんにちは。これは動画の吹き替えに使うナレーションの声です。最後までご覧いただきありがとうございます。",
+      "source": "ja-JP-KeitaNeural"
+    },
+    {
+      "id": "ko_sunhi_f",
+      "name": "Sun-Hi",
+      "country": "Hàn Quốc",
+      "flag": "🇰🇷",
+      "lang": "ko",
+      "gender": "Nữ",
+      "file": "ko_sunhi_f.wav",
+      "ref_text": "안녕하세요 여러분. 이것은 영상 더빙에 사용되는 나레이션 목소리입니다. 끝까지 시청해 주셔서 감사합니다.",
+      "source": "ko-KR-SunHiNeural"
+    },
+    {
+      "id": "ko_injoon_m",
+      "name": "In-Joon",
+      "country": "Hàn Quốc",
+      "flag": "🇰🇷",
+      "lang": "ko",
+      "gender": "Nam",
+      "file": "ko_injoon_m.wav",
+      "ref_text": "안녕하세요 여러분. 이것은 영상 더빙에 사용되는 나레이션 목소리입니다. 끝까지 시청해 주셔서 감사합니다.",
+      "source": "ko-KR-InJoonNeural"
+    },
+    {
+      "id": "zh_xiaoxiao_f",
+      "name": "Xiaoxiao",
+      "country": "Trung Quốc",
+      "flag": "🇨🇳",
+      "lang": "zh",
+      "gender": "Nữ",
+      "file": "zh_xiaoxiao_f.wav",
+      "ref_text": "大家好，欢迎来到本频道。这是用于视频配音的旁白声音。非常感谢大家的观看。",
+      "source": "zh-CN-XiaoxiaoNeural"
+    },
+    {
+      "id": "zh_yunxi_m",
+      "name": "Yunxi",
+      "country": "Trung Quốc",
+      "flag": "🇨🇳",
+      "lang": "zh",
+      "gender": "Nam",
+      "file": "zh_yunxi_m.wav",
+      "ref_text": "大家好，欢迎来到本频道。这是用于视频配音的旁白声音。非常感谢大家的观看。",
+      "source": "zh-CN-YunxiNeural"
+    },
+    {
+      "id": "fr_denise_f",
+      "name": "Denise",
+      "country": "Pháp",
+      "flag": "🇫🇷",
+      "lang": "fr",
+      "gender": "Nữ",
+      "file": "fr_denise_f.wav",
+      "ref_text": "Bonjour à tous et bienvenue sur la chaîne. Voici une voix de narration utilisée pour le doublage de vidéos. Merci beaucoup de votre attention.",
+      "source": "fr-FR-DeniseNeural"
+    },
+    {
+      "id": "fr_henri_m",
+      "name": "Henri",
+      "country": "Pháp",
+      "flag": "🇫🇷",
+      "lang": "fr",
+      "gender": "Nam",
+      "file": "fr_henri_m.wav",
+      "ref_text": "Bonjour à tous et bienvenue sur la chaîne. Voici une voix de narration utilisée pour le doublage de vidéos. Merci beaucoup de votre attention.",
+      "source": "fr-FR-HenriNeural"
+    }
+  ]
+}

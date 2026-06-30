@@ -24,9 +24,10 @@ export default function VideoPlayer({ filename, hasOutput }) {
     );
   }
 
-  // To play the video, we assume the backend serves static files or we just construct the URL if exposed
-  // We need to add static file serving to FastAPI backend!
-  const videoUrl = `${API_BASE}/output/${filename.replace('.mp4', '_dubbed.mp4')}`;
+  const lastDot = filename.lastIndexOf('.');
+  const baseName = lastDot !== -1 ? filename.substring(0, lastDot) : filename;
+  const safeName = encodeURIComponent(`${baseName}_dubbed.mp4`);
+  const videoUrl = `${API_BASE}/output/${safeName}`;
 
   return (
     <div className="glass glass-panel animate-slide-up" style={{ animationDelay: '0.3s' }}>

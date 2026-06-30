@@ -5,6 +5,7 @@ import { API_BASE } from '../api';
 export default function ReviewModal({ jobId, onClose, onResume }) {
   const [segments, setSegments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saveStatuses, setSaveStatuses] = useState({});
   const debounceTimers = useRef({});
 
   useEffect(() => {
@@ -32,28 +33,34 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
   const handleUpdate = (id, newText) => {
     // Optimistic update immediately
     setSegments(prev => prev.map(s => s.id === id ? { ...s, translated_text: newText } : s));
+    setSaveStatuses(prev => ({ ...prev, [id]: 'saving' }));
 
     // Debounce the API call 500ms
     clearTimeout(debounceTimers.current[id]);
     debounceTimers.current[id] = setTimeout(async () => {
       try {
-        await fetch(`${API_BASE}/api/jobs/${jobId}/segments`, {
+        const res = await fetch(`${API_BASE}/api/jobs/${jobId}/segments`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, translated_text: newText })
         });
+        if (!res.ok) throw new Error(`save failed (HTTP ${res.status})`);
+        setSaveStatuses(prev => ({ ...prev, [id]: 'saved' }));
       } catch (e) {
         console.error(e);
+        setSaveStatuses(prev => ({ ...prev, [id]: 'error' }));
       }
     }, 500);
   };
 
   const handleResume = async () => {
     try {
-      await fetch(`${API_BASE}/api/jobs/${jobId}/resume`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/resume`, { method: 'POST' });
+      if (!res.ok) throw new Error(`resume failed (HTTP ${res.status})`);
       onResume();
     } catch (e) {
       console.error(e);
+      alert('Không thể tiếp tục lồng tiếng — job chưa sẵn sàng hoặc backend lỗi. Vui lòng thử lại.');
     }
   };
 
@@ -73,58 +80,56 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
           {loading ? (
             <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Đang tải kịch bản...</div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-light)' }}>
-                  <th style={{ padding: '12px', width: '15%' }}>Thời gian</th>
-                  <th style={{ padding: '12px', width: '40%' }}>Bản gốc</th>
-                  <th style={{ padding: '12px', width: '45%' }}>Bản dịch (Bấm để sửa)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map((seg) => (
-                  <tr key={seg.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <td style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                      {seg.start_time.toFixed(1)}s - {seg.end_time.toFixed(1)}s
-                    </td>
-                    <td style={{ padding: '12px', fontSize: '0.95rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {segments.map((seg) => {
+                const saveStatus = saveStatuses[seg.id];
+                return (
+                  <div key={seg.id} className="segment-card">
+                    {/* Status Indicator */}
+                    {saveStatus === 'saving' && (
+                      <div className="save-indicator saving">
+                        Đang lưu...
+                      </div>
+                    )}
+                    {saveStatus === 'saved' && (
+                      <div className="save-indicator saved">
+                        <Save size={12} /> Đã lưu
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 500 }}>
+                        ⏳ {seg.start_time.toFixed(1)}s - {seg.end_time.toFixed(1)}s
+                      </span>
                       {seg.speaker && (
                         <span style={{ 
-                          display: 'inline-block',
-                          padding: '2px 6px',
+                          padding: '2px 8px',
                           background: 'rgba(139, 92, 246, 0.2)',
                           color: '#c4b5fd',
-                          borderRadius: '4px',
+                          borderRadius: '12px',
                           fontSize: '0.75rem',
-                          marginBottom: '6px',
-                          marginRight: '6px'
+                          fontWeight: 600,
+                          border: '1px solid rgba(139, 92, 246, 0.3)'
                         }}>
-                          {seg.speaker}
+                          🎤 {seg.speaker}
                         </span>
                       )}
+                    </div>
+                    
+                    <div style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.8)', padding: '4px 0' }}>
                       {seg.original_text}
-                    </td>
-                    <td style={{ padding: '12px' }}>
-                      <textarea 
-                        value={seg.translated_text || ''}
-                        onChange={(e) => handleUpdate(seg.id, e.target.value)}
-                        style={{
-                          width: '100%',
-                          minHeight: '60px',
-                          background: 'rgba(0,0,0,0.2)',
-                          border: '1px solid var(--border-light)',
-                          color: 'white',
-                          padding: '8px',
-                          borderRadius: '4px',
-                          resize: 'vertical',
-                          fontFamily: 'inherit'
-                        }}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                    
+                    <textarea 
+                      className="segment-textarea"
+                      value={seg.translated_text || ''}
+                      placeholder="Nhập bản dịch tại đây..."
+                      onChange={(e) => handleUpdate(seg.id, e.target.value)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
         

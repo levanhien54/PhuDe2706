@@ -30,16 +30,27 @@ class DemucsClient(BaseClient):
             ]
             log.debug("demucs_cmd", cmd=" ".join(str(c) for c in cmd))
 
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await process.communicate()
+            except asyncio.CancelledError:
+                # Job cancelled mid-separation: kill the demucs child (GPU) so it doesn't orphan.
+                process.kill()
+                await process.wait()
+                raise
 
             if process.returncode != 0:
-                log.error("demucs_local_failed", stderr=stderr.decode())
-                raise ServiceUnavailableError(f"Local Demucs failed: {stderr.decode()}")
+                out_str = stdout.decode(errors='replace')
+                err_str = stderr.decode(errors='replace')
+                log.error("demucs_local_failed", stdout=out_str, stderr=err_str)
+                raise ServiceUnavailableError(f"Local Demucs failed: {err_str} | {out_str}")
 
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             src_vocal = os.path.join(output_dir, "htdemucs_ft", base_name, "vocals.wav")

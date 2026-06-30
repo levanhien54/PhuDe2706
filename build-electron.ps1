@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # build-electron.ps1 — Build Video Dubbing thành file EXE (Electron/Chromium)
 # =============================================================================
 # Output: dist-electron\Video Dubbing.exe  (portable, không cần cài đặt)
@@ -56,6 +56,9 @@ npm run build
 if ($LASTEXITCODE -ne 0) { Write-Fail "Vite build thất bại" }
 
 Set-Location $ProjectRoot
+if (-not (Test-Path "$ProjectRoot\frontend\dist\index.html")) {
+    Write-Fail "frontend/dist/index.html không tồn tại sau khi build! Vite build có thể đã lỗi. EXE nạp frontend/dist trực tiếp trên đĩa (không còn nhúng trong asar), nên bước này bắt buộc phải có."
+}
 Write-OK "frontend/dist/ đã được tạo"
 
 # ── Step 3: Build Electron portable EXE ────────────────────────────────────────
@@ -78,9 +81,9 @@ if (-not $ExeSource) {
     Write-Fail "Không tìm thấy EXE trong dist-electron/"
 }
 
-$DestExe = "$ProjectRoot\VideoDubbing.exe"
+$DestExe = "$ProjectRoot\Video Dubbing.exe"
 Copy-Item $ExeSource.FullName $DestExe -Force
-Write-OK "Đã copy: $($ExeSource.Name) → VideoDubbing.exe"
+Write-OK "Đã copy: $($ExeSource.Name) → Video Dubbing.exe"
 
 # ── Done ───────────────────────────────────────────────────────────────────────
 
@@ -91,7 +94,7 @@ Write-Host "" -ForegroundColor Green
 Write-Host " File EXE: $DestExe" -ForegroundColor Green
 Write-Host "" -ForegroundColor Green
 Write-Host " Cách dùng:" -ForegroundColor Green
-Write-Host "   1. Double-click VideoDubbing.exe" -ForegroundColor Green
+Write-Host "   1. Double-click 'Video Dubbing.exe'" -ForegroundColor Green
 Write-Host "   2. Chờ splash screen (30-90 giây lần đầu tải model)" -ForegroundColor Green
 Write-Host "   3. Giao diện tự mở trong cửa sổ Chromium" -ForegroundColor Green
 Write-Host "" -ForegroundColor Green

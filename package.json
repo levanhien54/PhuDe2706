@@ -25,7 +25,6 @@
     },
     "files": [
       "electron/**/*",
-      "frontend/dist/**/*",
       "!**/node_modules/**/*"
     ],
     "win": {
@@ -35,7 +34,8 @@
           "arch": ["x64"]
         }
       ],
-      "requestedExecutionLevel": "requireAdministrator",
+      "requestedExecutionLevel": "asInvoker",
+      "icon": "icon.ico",
       "artifactName": "${productName}.exe"
     },
     "portable": {

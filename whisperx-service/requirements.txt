@@ -1,4 +1,7 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
 python-multipart==0.0.9
-whisperx==3.1.5
+# whisperx itself is installed separately by the setup scripts (it pins a git HEAD = 3.8.7rc1
+# that is newer than PyPI's 3.8.6, and a git URL here would break offline --no-index installs):
+#   online  -> pip install git+https://github.com/m-bain/whisperx.git
+#   offline -> pip install --pre whisperx   (the git-built sdist bundled in offline_wheels)

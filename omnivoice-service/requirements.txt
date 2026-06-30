@@ -1,0 +1,10 @@
+# OmniVoice TTS service (default TTS engine, started on port 3900).
+# torch / torchaudio are installed separately at the top of the setup scripts.
+omnivoice==0.1.5
+# Pin gradio to the version proven with omnivoice 0.1.5. gradio 6.x requires fastapi>=0.115.2
+# (collides with the pinned framework set) and is untested with omnivoice 0.1.5.
+gradio==4.44.1
+# Framework versions matched to the working venv so all services share one consistent set.
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
+soundfile==0.12.1

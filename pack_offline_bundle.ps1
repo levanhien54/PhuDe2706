@@ -22,13 +22,20 @@ if (-not (Test-Path $OfflineDir)) {
     New-Item -ItemType Directory -Force -Path $OfflineDir | Out-Null
 }
 
+Write-Step "Tải build tools (pip/setuptools/wheel — cần để build các sdist như demucs, dora-search, whisperx khi cài offline)..."
+& $PipExe download pip setuptools wheel -d $OfflineDir
+
 Write-Step "Tải PyTorch CUDA 11.8 Wheels..."
 & $PipExe download torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 -d $OfflineDir
 
 Write-Step "Tải Backend Dependencies..."
 & $PipExe download -r "$ProjectRoot\orchestrator\requirements.txt" -d $OfflineDir
 & $PipExe download -r "$ProjectRoot\whisperx-service\requirements.txt" -d $OfflineDir
+# whisperx pins a git HEAD (newer than PyPI 3.8.6); build it into an sdist so the offline
+# installer can pull it by name with --pre.
+& $PipExe download "git+https://github.com/m-bain/whisperx.git" -d $OfflineDir
 & $PipExe download -r "$ProjectRoot\tts-service\requirements.txt" -d $OfflineDir
+& $PipExe download -r "$ProjectRoot\omnivoice-service\requirements.txt" -d $OfflineDir
 & $PipExe download demucs vllm einops scipy openmim huggingface_hub diffusers -d $OfflineDir
 
 Write-Step "Tải MMCV Wheel..."

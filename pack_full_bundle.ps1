@@ -117,6 +117,13 @@ if (Test-Path "$Src\icon.ico") { Copy-Item "$Src\icon.ico" "$Stage\icon.ico" -Fo
 foreach ($d in @('data\input','data\output','data\temp')) { New-Item -ItemType Directory -Force -Path "$Stage\$d" | Out-Null }
 OK "structure ready"
 
+# --- 10. preflight + docs ---
+Step "Preflight + tài liệu"
+foreach ($f in @('preflight_check.ps1','Kiem-tra-he-thong.bat')) {
+    if (Test-Path "$Src\$f") { Copy-Item "$Src\$f" "$Stage\$f" -Force; OK $f }
+}
+if (Test-Path "$Src\HUONG-DAN") { Mirror "$Src\HUONG-DAN" "$Stage\HUONG-DAN"; OK "HUONG-DAN" }
+
 # --- Summary ---
 $total = (Get-ChildItem $Stage -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
 Write-Host ""
@@ -124,3 +131,7 @@ Write-Host "============================================================" -Foreg
 Write-Host ("  STAGED: $Stage  ({0:N2} GB)" -f ($total/1GB)) -ForegroundColor Green
 Write-Host "  Next:  .\build_installer.ps1 -Stage `"$Stage`"" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green
+
+# Reaching here means every step succeeded (failures throw under ErrorActionPreference='Stop').
+# Force a clean exit code so callers can't misread robocopy's success code (1) as a failure.
+exit 0

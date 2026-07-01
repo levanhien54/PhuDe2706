@@ -8,7 +8,10 @@ from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
 
-_WHISPERX_VRAM_GB = 5.0
+def _whisperx_vram_gb(model: str) -> float:
+    """VRAM to reserve for the ASR model. large-v3-turbo (4 decoder layers) needs ~3GB; the
+    full large-v3 needs ~5GB. Right-sizing frees pipeline budget when turbo is in use."""
+    return 3.0 if "turbo" in (model or "").lower() else 5.0
 
 
 async def run_transcribe(
@@ -30,7 +33,7 @@ async def run_transcribe(
             log.warning("transcribe_resume_failed", error=str(e))
 
     try:
-        async with vram.slot("whisperx", _WHISPERX_VRAM_GB):
+        async with vram.slot("whisperx", _whisperx_vram_gb(settings.whisper_model)):
             client = WhisperXClient(settings)
             segments = await client.transcribe(vocal_path)
             

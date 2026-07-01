@@ -104,7 +104,7 @@ def _detect_device():
 
 DEVICE = _detect_device()
 COMPUTE_TYPE = os.environ.get("COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
-MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3")
+MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 BATCH_SIZE = int(os.environ.get("WHISPER_BATCH_SIZE", "32"))  # 23GB GPU handles >16
 MODEL_DIR = os.environ.get("WHISPER_MODEL_DIR", "").strip() or None   # explicit download root
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()

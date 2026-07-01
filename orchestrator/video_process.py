@@ -214,7 +214,10 @@ def _detect_static_boxes(input_path: str, ocr, fps: float, width: int, height: i
 
 
 def build_temporal_reference(input_path: str, n_samples: int = 20) -> np.ndarray | None:
-    """Sample n_samples frames đều toàn video, tính median → clean background."""
+    """Sample n_samples frames đều toàn video, tính median → clean background.
+
+    NOTE: currently unused by the live pipeline — remove_watermark_from_video hard-codes
+    temporal_ref=None; this is referenced only by tests. Parked for the temporal-inpaint feature."""
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         return None
@@ -253,7 +256,9 @@ def apply_temporal_inpaint(
     static_boxes: list[tuple],
     dynamic_boxes: list[tuple],
 ) -> np.ndarray:
-    """Legacy TELEA inpainting — kept for backward compatibility. Use apply_blur_to_frame instead."""
+    """Legacy TELEA inpainting — kept for backward compatibility. Use apply_blur_to_frame instead.
+
+    NOTE: not wired into the live pipeline (test-only); parked for temporal inpainting."""
     result = frame.copy()
 
     if reference is not None:
@@ -485,6 +490,11 @@ def precompute_ocr_results(
 
 
 # =====================================================================================
+# DEAD CODE / NOT WIRED IN: nothing calls _fast_blur_ffmpeg or its helpers (_plan_blur_regions,
+# _frames_to_time_windows, _build_blur_filter, _clamp_even, and the constants below). The LIVE
+# blur path is _precise_blur_per_frame -> apply_blur_to_frame, which has NO per-instant blur-area
+# cap — so the _MAX_INSTANT_FRAC guarantees described here do NOT protect the current output. Kept
+# as a parked optimization: wire back in intentionally or delete; don't rely on its guarantees.
 # FAST PATH — single-pass ffmpeg region blur.
 # The old threaded pipeline (read→ocr→blur→write) decoded every frame in Python (cv2) and
 # piped ~13.5GB of raw BGR to the encoder → ~59s for a 72s 1080×1918 video, ALL of it

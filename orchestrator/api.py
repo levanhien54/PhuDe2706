@@ -2,6 +2,9 @@ import os
 import uuid
 import asyncio
 import shutil
+import subprocess
+import time
+import httpx
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
@@ -523,6 +526,60 @@ async def get_status(filename: str):
         return {"filename": filename, "status": "COMPLETED"}
         
     return {"filename": filename, "status": "NOT_FOUND"}
+
+_HEALTH_CACHE = {"ts": 0.0, "data": None}
+_HEALTH_TTL = 2.0
+
+
+def _gpu_info():
+    """Best-effort GPU name + VRAM via nvidia-smi. Returns None if unavailable."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            name, used, total = [x.strip() for x in out.stdout.strip().splitlines()[0].split(",")]
+            return {"name": name, "vram_used_mb": int(used), "vram_total_mb": int(total)}
+    except Exception:
+        pass
+    return None
+
+
+async def _ping(client: "httpx.AsyncClient", url: str) -> bool:
+    try:
+        r = await client.get(url, timeout=1.5)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+@app.get("/api/health")
+async def api_health():
+    """Aggregate readiness of the sub-services + GPU. Always returns 200 (never blocks the UI)."""
+    now = time.monotonic()
+    if _HEALTH_CACHE["data"] and now - _HEALTH_CACHE["ts"] < _HEALTH_TTL:
+        return _HEALTH_CACHE["data"]
+    checks = {"whisperx": f"{settings.whisperx_api}/health"}
+    if settings.tts_engine == "omnivoice":
+        checks["omnivoice"] = f"{settings.omnivoice_api}/health"
+    else:
+        checks["tts"] = f"{settings.tts_api}/health"
+    if settings.llm_backend == "ollama":
+        checks["ollama"] = f"{settings.ollama_host}/api/tags"
+    else:
+        checks["vllm"] = f"{settings.vllm_host}/v1/models"
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(*[_ping(client, u) for u in checks.values()])
+    services = {"orchestrator": "up"}
+    for name, ok in zip(checks.keys(), results):
+        services[name] = "up" if ok else "down"
+    ready = sum(1 for v in services.values() if v == "up")
+    data = {"services": services, "ready": ready, "total": len(services),
+            "gpu": await asyncio.to_thread(_gpu_info)}
+    _HEALTH_CACHE.update(ts=now, data=data)
+    return data
 
 @app.get("/api/jobs/{job_id}/segments")
 async def api_get_segments(job_id: str):

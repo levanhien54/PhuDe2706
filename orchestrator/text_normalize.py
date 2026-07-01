@@ -332,6 +332,147 @@ def normalize_korean(text: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
+# ── German number reader (cardinals + ordinals) ─────────────────────────────────────────────
+# German writes 0..999,999 as ONE concatenated word (einhundertdreiundzwanzig); millions get a
+# space + Million(en). Decimal uses a comma ("Komma"); "." is a thousands separator or an ordinal
+# marker (a number + "." before a space/word = ordinal). Ordinal declension is context-dependent
+# (der dritte / am dritten); we emit the base -te/-ste form, which reads naturally in most cases.
+_DE_ONES = ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"]
+_DE_TEENS = {10: "zehn", 11: "elf", 12: "zwölf", 13: "dreizehn", 14: "vierzehn", 15: "fünfzehn",
+             16: "sechzehn", 17: "siebzehn", 18: "achtzehn", 19: "neunzehn"}
+_DE_TENS = {20: "zwanzig", 30: "dreißig", 40: "vierzig", 50: "fünfzig", 60: "sechzig",
+            70: "siebzig", 80: "achtzig", 90: "neunzig"}
+_DE_ORD_IRREG = {1: "erste", 3: "dritte", 7: "siebte", 8: "achte"}
+
+
+def _de_below_100(n: int) -> str:
+    if n in _DE_TEENS:
+        return _DE_TEENS[n]
+    if n < 10:
+        return _DE_ONES[n]                       # 1 -> eins (standalone)
+    if n in _DE_TENS:
+        return _DE_TENS[n]
+    u, t = n % 10, (n // 10) * 10
+    return ("ein" if u == 1 else _DE_ONES[u]) + "und" + _DE_TENS[t]   # 21 -> einundzwanzig
+
+
+def _de_below_1000(n: int) -> str:
+    h, r = n // 100, n % 100
+    out = (("ein" if h == 1 else _DE_ONES[h]) + "hundert") if h else ""   # 100 -> einhundert
+    return out + (_de_below_100(r) if r else "")
+
+
+def _de_read(n: int) -> str:
+    if n == 0:
+        return "null"
+    mill, rest = n // 1_000_000, n % 1_000_000
+    th, r3 = rest // 1000, rest % 1000
+    word = ""
+    if th:
+        word += (("ein" if th == 1 else _de_below_1000(th)) + "tausend")   # 1000 -> eintausend
+    if r3:
+        word += _de_below_1000(r3)
+    if mill:
+        m_str = "eine Million" if mill == 1 else _de_read(mill) + " Millionen"
+        return (m_str + " " + word).strip() if word else m_str
+    return word
+
+
+def _de_ordinal(n: int) -> str:
+    if n in _DE_ORD_IRREG:
+        return _DE_ORD_IRREG[n]
+    return _de_read(n) + ("te" if n < 20 else "ste")   # vierte / zwanzigste / einundzwanzigste
+
+
+def normalize_german(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r"\s*&\s*", " und ", text)
+    text = re.sub(r"(\d)\s*%", r"\1 Prozent", text)
+    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 Euro", text)
+    text = re.sub(r"(\d[\d.,]*)\s*€", r"\1 Euro", text)
+    text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 Dollar", text)
+    # Ordinal: a number + "." before a space/word/end (e.g. "3. Mai") — do BEFORE separators.
+    text = re.sub(r"(?<!\d)(\d+)\.(?=\s|$|[A-Za-zÄÖÜäöü])",
+                  lambda m: _de_ordinal(int(m.group(1))), text)
+    # Thousands separator dots ("1.234.567" -> "1234567").
+    text = re.sub(r"(\d{1,3})(?:\.(\d{3}))+(?=\D|$)", lambda m: m.group().replace(".", ""), text)
+    # Decimal (German comma, or a leftover English dot) -> "Komma" + digit-by-digit fraction.
+    def _de_dec(m):
+        return _de_read(int(m.group(1))) + " Komma " + " ".join(_DE_ONES[int(d)] for d in m.group(2))
+    text = re.sub(r"(?<!\d)(\d+)[.,](\d+)", _de_dec, text)
+    # Remaining integers -> cardinal.
+    text = re.sub(r"\d+", lambda m: _de_read(int(m.group())), text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+# ── Japanese number reader (Sino-Japanese, kana output) ─────────────────────────────────────
+# Output kana (not kanji) so OmniVoice — which does no g2p — pronounces numbers reliably. Handles
+# 百/千 rendaku (300 さんびゃく, 600 ろっぴゃく, 3000 さんぜん, 8000 はっせん) and 万/億. Counter
+# rendaku (一本 いっぽん, 一個 いっこ …) is NOT modelled beyond the two most common native cases
+# (人: 一人 ひとり/二人 ふたり; つ: ひとつ…とお); other counters get the Sino reading + the counter.
+_JA_DIGITS = ["", "いち", "に", "さん", "よん", "ご", "ろく", "なな", "はち", "きゅう"]
+_JA_HYAKU = {1: "ひゃく", 2: "にひゃく", 3: "さんびゃく", 4: "よんひゃく", 5: "ごひゃく",
+             6: "ろっぴゃく", 7: "ななひゃく", 8: "はっぴゃく", 9: "きゅうひゃく"}
+_JA_SEN = {1: "せん", 2: "にせん", 3: "さんぜん", 4: "よんせん", 5: "ごせん",
+           6: "ろくせん", 7: "ななせん", 8: "はっせん", 9: "きゅうせん"}
+_JA_BIG = ["", "まん", "おく", "ちょう", "けい"]
+_JA_TSU = {1: "ひとつ", 2: "ふたつ", 3: "みっつ", 4: "よっつ", 5: "いつつ",
+           6: "むっつ", 7: "ななつ", 8: "やっつ", 9: "ここのつ", 10: "とお"}
+
+
+def _ja_4(n: int) -> str:
+    """Read 1..9999 in Sino-Japanese kana with 百/千 rendaku."""
+    s, h, t, o = n // 1000, (n // 100) % 10, (n // 10) % 10, n % 10
+    out = ""
+    if s:
+        out += _JA_SEN[s]
+    if h:
+        out += _JA_HYAKU[h]
+    if t:
+        out += "じゅう" if t == 1 else _JA_DIGITS[t] + "じゅう"
+    if o:
+        out += _JA_DIGITS[o]
+    return out
+
+
+def _ja_read(n: int) -> str:
+    if n == 0:
+        return "ゼロ"
+    groups = []
+    while n > 0:
+        groups.append(n % 10000)
+        n //= 10000
+    out = ""
+    for gi in range(len(groups) - 1, -1, -1):
+        if groups[gi]:
+            out += _ja_4(groups[gi]) + _JA_BIG[gi]      # 一万 = いちまん (no leading-strip, unlike Korean)
+    return out
+
+
+def _ja_frac(digits: str) -> str:
+    return "".join("ゼロ" if d == "0" else _JA_DIGITS[int(d)] for d in digits)
+
+
+def normalize_japanese(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r"\s*&\s*", " と ", text)
+    text = re.sub(r"(\d)\s*%", r"\1パーセント", text)
+    text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1ドル", text)
+    text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1ドル", text)
+    text = re.sub(r"(?<!\d)(\d+)\.(\d+)",
+                  lambda m: _ja_read(int(m.group(1))) + "てん" + _ja_frac(m.group(2)), text)
+    # 人: 一人 ひとり / 二人 ふたり are irregular; 3+ take Sino + にん.
+    text = re.sub(r"(\d+)\s*人",
+                  lambda m: {"1": "ひとり", "2": "ふたり"}.get(m.group(1), _ja_read(int(m.group(1))) + "にん"), text)
+    # つ: native counting 1..10 (ひとつ…とお).
+    text = re.sub(r"(\d+)\s*つ",
+                  lambda m: _JA_TSU.get(int(m.group(1)), _ja_read(int(m.group(1))) + "つ"), text)
+    text = re.sub(r"\d+", lambda m: _ja_read(int(m.group())), text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 # ── VietNormalizer (mature lib; optional) ───────────────────────────────────────────────────
 try:
     from vietnormalizer import VietnameseNormalizer
@@ -364,6 +505,9 @@ def normalize_for_tts(text: str, lang_code: str) -> str:
     if lang_code == "ko":
         # Korean uses its own script — do NOT strip Hangul; expand numbers by Sino/native counter.
         return normalize_korean(_ranges_to_words(text, "에서"))
-    # ja / zh / fr / de / ... : the model reads the script; just the shared pre-clean is applied.
-    # (Number expansion for ja/de is a follow-up — OmniVoice won't verbalize bare digits.)
+    if lang_code == "ja":
+        return normalize_japanese(_ranges_to_words(text, "から"))
+    if lang_code == "de":
+        return normalize_german(_ranges_to_words(text, "bis"))
+    # zh / fr / ... : the model reads the script; just the shared pre-clean is applied.
     return text

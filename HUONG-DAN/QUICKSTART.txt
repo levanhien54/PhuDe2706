@@ -1,0 +1,58 @@
+====================================================================
+  VIDEO DUBBING — BAT DAU NHANH (Quick Start)
+====================================================================
+
+Ung dung long tieng video bang AI, chay HOAN TOAN OFFLINE tren may
+ban (khong can Internet sau khi cai xong). Can may Windows co GPU
+NVIDIA rieng (xem yeu cau chi tiet trong file 01-CAI-DAT.md).
+
+--------------------------------------------------------------------
+5 BUOC DE CHAY UNG DUNG
+--------------------------------------------------------------------
+
+BUOC 1 — Chep 2 file vao CUNG MOT thu muc
+    Setup.exe
+    app.7z
+    (Hai file nay PHAI nam chung mot thu muc, khong duoc tach rieng
+    — Setup.exe can tim thay app.7z ben canh no de giai nen.)
+
+BUOC 2 — Chay Setup.exe
+    Nhay dup vao Setup.exe, chon noi cai dat (mac dinh:
+    %LOCALAPPDATA%\VideoDubbing), bam cai dat va cho giai nen xong.
+    ~ Thoi gian du kien: vai phut (tuy toc do o dia — bo giai nen
+      chua khoang 20 GB).
+
+BUOC 3 — Kiem tra he thong
+    Sau khi cai xong, tren Desktop / Start Menu se co shortcut
+    "Video Dubbing". Trong thu muc cai dat cung co file
+    Kiem-tra-he-thong.bat — nhay dup vao do CHAY TRUOC KHI dung app.
+    Doc ket qua hien ra: moi dong phai la [PASS] (dat yeu cau).
+    Neu co dong [FAIL] mau do, xem file 01-CAI-DAT.md de biet cach
+    xu ly truoc khi sang buoc 4.
+    ~ Thoi gian du kien: vai giay.
+
+BUOC 4 — Mo "Video Dubbing"
+    Nhay dup vao shortcut "Video Dubbing" (Desktop hoac Start Menu).
+
+BUOC 5 — Doi man hinh khoi dong bao du dich vu
+    Mot cua so nho hien ra voi danh sach 5 dong trang thai:
+        GPU · Dich (Ollama) · Nhan giong · Giong doc · Dieu phoi
+    Doi den khi CA 5 DONG deu co dau check (tich xanh). Sau do cua
+    so chinh cua ung dung se tu mo (trinh duyet noi bo / cua so
+    Electron).
+    ~ Thoi gian du kien: khoang 1-2 phut cho lan khoi dong dau tien
+      (nap model vao GPU — WhisperX thuong lau nhat).
+
+--------------------------------------------------------------------
+SAU KHI MO DUOC UNG DUNG
+--------------------------------------------------------------------
+- Keo-tha video vao khung "Tai Video Len", hoac bo video vao thu
+  muc data\input trong thu muc cai dat.
+- Chon cau hinh (ngon ngu dich, giong doc, khop moi, xoa chu...).
+- Bam "Bat dau long tieng" va theo doi tien trinh.
+- Video hoan thanh nam trong thu muc data\output (co the doi noi
+  luu trong "Cau hinh" > "Thu muc luu video").
+
+Chi tiet day du: xem 01-CAI-DAT.md, 02-SU-DUNG.md va
+03-XU-LY-SU-CO.md trong cung thu muc HUONG-DAN nay.
+====================================================================

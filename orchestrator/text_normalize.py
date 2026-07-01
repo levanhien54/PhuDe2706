@@ -131,6 +131,10 @@ _L = "A-Za-zÀ-ỹ"  # latin + Vietnamese letters
 
 def _pre_clean(text: str) -> str:
     text = unicodedata.normalize("NFC", text)               # NFC: decomposed VN breaks pacing
+    text = re.sub("[​-‏﻿­]", "", text)   # zero-width / BOM / soft hyphen
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)  # control chars (keep \t \n \r)
+    text = re.sub(r"[*`~#]+", " ", text)                    # LLM markdown (**bold**, `code`, # ~~) -> space
+    text = re.sub(r"([!?])\1+", r"\1", text)                # collapse "!!!"/"???" so TTS doesn't over-emote
     text = _URL_RE.sub(" ", text)                           # URLs/emails are read as garbage
     text = re.sub(rf"(?<=[{_L}])(?=\d)", " ", text)         # "page2" -> "page 2"
     text = re.sub(rf"(?<=\d)(?=[{_L}])", " ", text)         # "12B"/"5km" -> "12 B" / "5 km"
@@ -149,6 +153,10 @@ def normalize_vietnamese(text: str) -> str:
     text = re.sub(r"(\d)\s*%", r"\1 phần trăm", text)
     text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 đô la", text)   # whole amount after a leading $
     text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 đô la", text)
+    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 euro", text)
+    text = re.sub(r"(\d[\d.,]*)\s*€", r"\1 euro", text)
+    text = re.sub(r"£\s*(\d[\d.,]*)", r"\1 bảng Anh", text)
+    text = re.sub(r"(\d[\d.,]*)\s*£", r"\1 bảng Anh", text)
     text = re.sub(r"(\d)\s*[₫đ](?=\b)", r"\1 đồng", text)
     text = re.sub(r"(\d[\d.,]*)\s*VND\b", r"\1 đồng", text)
     text = re.sub(r"\s*&\s*", " và ", text)
@@ -183,6 +191,10 @@ def _vi_pre(text: str) -> str:
     # Currency suffix đ/₫/VND → 'đồng' (VN drops a bare trailing 'đ').
     text = re.sub(r"(\d[\d.,]*)\s*[đ₫](?![\wÀ-ỹ])", r"\1 đồng", text)
     text = re.sub(r"(\d[\d.,]*)\s*VND\b", r"\1 đồng", text, flags=re.IGNORECASE)
+    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 euro", text)
+    text = re.sub(r"(\d[\d.,]*)\s*€", r"\1 euro", text)
+    text = re.sub(r"£\s*(\d[\d.,]*)", r"\1 bảng Anh", text)
+    text = re.sub(r"(\d[\d.,]*)\s*£", r"\1 bảng Anh", text)
     # Arithmetic symbols between numbers.
     text = re.sub(r"(?<=\d)\s*\+\s*(?=\d)", " cộng ", text)
     text = re.sub(r"(?<=\d)\s*=\s*(?=\d)", " bằng ", text)
@@ -218,6 +230,8 @@ def normalize_english(text: str) -> str:
     text = re.sub(r"(\d)\s*%", r"\1 percent", text)
     text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 dollars", text)
     text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 dollars", text)
+    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 euros", text)
+    text = re.sub(r"£\s*(\d[\d.,]*)", r"\1 pounds", text)
     text = re.sub(r"\s*&\s*", " and ", text)
     text = re.sub(r"\d[\d.,]*\d|\d", _read_en_number, text)
     return re.sub(r"\s{2,}", " ", text).strip()

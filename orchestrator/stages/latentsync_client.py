@@ -46,8 +46,15 @@ async def run_latentsync_inference(video_path: str, audio_path: str, output_path
         stderr=subprocess.PIPE
     )
     
-    stdout, stderr = await process.communicate()
-    
+    try:
+        stdout, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        # Job cancelled mid-inference: kill the LatentSync child (holds ~8GB VRAM) so it does
+        # not orphan and OOM the next job, then propagate the cancel.
+        process.kill()
+        await process.wait()
+        raise
+
     if process.returncode != 0:
         log.error("latentsync_error", stderr=stderr.decode("utf-8", errors="ignore"))
         raise RuntimeError(f"LatentSync inference thất bại. Mã lỗi: {process.returncode}")

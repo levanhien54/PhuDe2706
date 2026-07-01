@@ -19,6 +19,14 @@ class VRAMManager:
         return self.total_gb - sum(sum(v) for v in self._allocated.values())
 
     async def acquire(self, service: str, vram_gb: float) -> None:
+        # Fail fast on an unsatisfiable reservation. Without this, wait_for() would block
+        # forever (available_gb() maxes out at total_gb) and hang the pipeline worker with no
+        # timeout — e.g. TTS_CONCURRENCY=5 -> 20GB requested on the 16GB profile.
+        if vram_gb > self.total_gb:
+            raise ValueError(
+                f"VRAM request {vram_gb:.1f}GB for '{service}' exceeds the total budget "
+                f"{self.total_gb:.1f}GB; lower the concurrency/model size for this stage."
+            )
         async with self._condition:
             await self._condition.wait_for(lambda: self.available_gb() >= vram_gb)
             self._allocated.setdefault(service, []).append(vram_gb)

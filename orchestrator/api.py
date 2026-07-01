@@ -20,7 +20,7 @@ from orchestrator.pipeline import (
 from orchestrator.database import (
     save_job, update_job_status, get_job, get_job_by_filename,
     save_segments, get_segments, update_segment_translation,
-    get_jobs_by_filenames, fail_stale_jobs,
+    get_jobs_by_filenames, get_jobs_by_status, fail_stale_jobs,
     get_watch_config, set_watch_config,
     get_app_config, set_app_config
 )
@@ -61,7 +61,16 @@ async def cleanup_loop():
                 continue
             import time
             now = time.time()
-            for item in os.listdir(temp_dir):
+            # A temp dir is named after the job base_name (filename without extension). Match
+            # active jobs on base_name directly rather than reconstructing filename+ext: the
+            # old approach queried `item + ext` with lowercase extensions and missed jobs whose
+            # stored extension case differs (SQLite compares case-sensitively), e.g. '.MP4',
+            # so it could wipe the temp dir of a job still AWAITING_REVIEW.
+            active_base_names = {
+                os.path.splitext(j["filename"])[0]
+                for j in get_jobs_by_status(_active_statuses)
+            }
+            for item in await asyncio.to_thread(os.listdir, temp_dir):
                 try:
                     path = os.path.join(temp_dir, item)
                     if not os.path.isdir(path):
@@ -69,15 +78,10 @@ async def cleanup_loop():
                     if now - os.path.getmtime(path) <= 86400:
                         continue
                     # Never wipe dirs whose job is still active (AWAITING_REVIEW can sit >24h)
-                    is_active = False
-                    for ext in ALLOWED_EXTENSIONS:
-                        job_info = get_job_by_filename(item + ext)
-                        if job_info and job_info.get("status") in _active_statuses:
-                            is_active = True
-                            break
-                    if is_active:
+                    if item in active_base_names:
                         continue
-                    shutil.rmtree(path, ignore_errors=True)
+                    # rmtree of a large frame dir off the event loop so status/cancel stay responsive
+                    await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
                     log.info("cleaned_up_stale_temp", path=path)
                 except Exception:
                     log.exception("cleanup_loop_item_failed", item=item)
@@ -198,7 +202,9 @@ app = FastAPI(title="Video Dubbing API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # No cookie/session auth is used, so credentials must stay off: the wildcard-origin +
+    # allow_credentials=True combo is unsafe (and browsers ignore it anyway).
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -241,22 +247,28 @@ def _is_valid_video_header(head: bytes) -> bool:
 
 @app.get("/api/videos")
 async def list_videos():
-    videos = [f for f in os.listdir(input_dir) if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+    def _scan_input():
+        # Keep all filesystem I/O (listdir + per-file exists) off the event loop thread.
+        vids = [f for f in os.listdir(input_dir) if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+        exists = {
+            v: os.path.exists(os.path.join(output_dir, f"{os.path.splitext(v)[0]}_dubbed.mp4"))
+            for v in vids
+        }
+        return vids, exists
+    videos, output_exists = await asyncio.to_thread(_scan_input)
     jobs_map = get_jobs_by_filenames(videos)  # single query
     result = []
     for v in videos:
-        base_name = os.path.splitext(v)[0]
-        output_file = os.path.join(output_dir, f"{base_name}_dubbed.mp4")
         job_info = jobs_map.get(v)
         status = "PENDING"
         if job_info:
             status = job_info["status"]
-        elif os.path.exists(output_file):
+        elif output_exists.get(v):
             status = "COMPLETED"
         result.append({
             "filename": v,
             "status": status,
-            "has_output": os.path.exists(output_file),
+            "has_output": output_exists.get(v, False),
             "job_id": job_info["job_id"] if job_info else None
         })
     return {"videos": result}
@@ -264,7 +276,15 @@ async def list_videos():
 def _cleanup_temp(base_name: str, data_dir: str):
     """Delete a finished/failed job's temp dir to bound disk use (the per-stage resume markers
     only matter while a job is mid-flight; the hourly cleanup_loop is the backstop)."""
-    temp_dir = os.path.join(data_dir, "temp", base_name)
+    temp_root = os.path.abspath(os.path.join(data_dir, "temp"))
+    temp_dir = os.path.abspath(os.path.join(temp_root, base_name))
+    # Defense in depth: base_name must resolve to a single component directly under temp/.
+    # This blocks path traversal (a base_name containing '..' or, on Windows, backslash
+    # separators that os.path.join honours) from letting rmtree escape data/temp, and also
+    # guards the empty-base_name case that would otherwise resolve to temp_root itself.
+    if os.path.dirname(temp_dir) != temp_root:
+        log.warning("cleanup_temp_skipped_unsafe", base_name=base_name, resolved=temp_dir)
+        return
     if os.path.isdir(temp_dir):
         shutil.rmtree(temp_dir, ignore_errors=True)
         log.info("cleanup_temp", dir=temp_dir)
@@ -359,6 +379,21 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
         _cleanup_temp(base_name, settings.data_dir)
 
 
+def _safe_video_name(filename: str) -> str:
+    """Validate a client-supplied video filename (URL path segment) and return a safe basename.
+
+    A URL segment may contain '..' or, on Windows, backslash separators that os.path.join would
+    honour, so any endpoint that turns {filename} into a filesystem path must never trust it raw.
+    Reject anything that is not a bare filename with an allowed extension."""
+    safe = os.path.basename(filename)
+    if not safe or safe != filename or safe in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    ext = os.path.splitext(safe)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'.")
+    return safe
+
+
 @app.post("/api/dub/{filename}")
 async def start_dubbing(
     filename: str,
@@ -370,6 +405,9 @@ async def start_dubbing(
     voice_mode: str = "multi",
     voice_preset: str = "",
 ):
+    filename = _safe_video_name(filename)
+    if not os.path.isfile(os.path.join(input_dir, filename)):
+        raise HTTPException(status_code=404, detail="Video not found.")
     job_id = str(uuid.uuid4())[:8]
     save_job(
         job_id, filename, target_lang, settings.vram_profile,
@@ -474,6 +512,7 @@ async def api_list_voices():
 
 @app.get("/api/status/{filename}")
 async def get_status(filename: str):
+    filename = _safe_video_name(filename)  # block path-traversal existence probing
     job_info = get_job_by_filename(filename)
     if job_info:
         return job_info
@@ -492,7 +531,11 @@ async def api_get_segments(job_id: str):
 
 @app.put("/api/jobs/{job_id}/segments")
 async def api_update_segment(job_id: str, data: SegmentUpdate):
-    update_segment_translation(data.id, data.translated_text)
+    # Scope the write to this job so a stale/mismatched segment id can't overwrite another
+    # job's translation (segments.id is a global autoincrement key).
+    updated = update_segment_translation(data.id, data.translated_text, job_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Segment not found for this job.")
     return {"message": "Updated"}
 
 async def run_pipeline_resume_task(job_id: str):

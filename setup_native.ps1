@@ -173,25 +173,51 @@ if (-not (Test-Path "$ProjectRoot\models\propainter\inference_propainter.py")) {
 Write-Host "Kích hoạt tải trọng số ProPainter (Khoảng 2GB)..."
 $propainter_script = @"
 import os
+import sys
 import urllib.request
 
 def dl(url, path):
-    if not os.path.exists(path):
-        print(f'Downloading {os.path.basename(path)}...')
-        try:
-            urllib.request.urlretrieve(url, path)
-        except Exception as e:
-            print(f'Lỗi khi tải {path}: {e}')
+    # Skip only if a non-empty file already exists. Download to a .part temp and atomically
+    # replace on success so an interrupted download never leaves a truncated file behind that
+    # future runs would blindly skip. Raise on failure so the caller can surface it.
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return
+    tmp = path + '.part'
+    print(f'Downloading {os.path.basename(path)}...')
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        if os.path.getsize(tmp) == 0:
+            raise IOError('file rỗng sau khi tải')
+        os.replace(tmp, path)
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        print(f'Lỗi khi tải {os.path.basename(path)}: {e}', file=sys.stderr)
+        raise
 
 weights_dir = os.path.join(r'$ProjectRoot', 'models', 'propainter', 'weights')
 os.makedirs(weights_dir, exist_ok=True)
 
-dl('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth', os.path.join(weights_dir, 'ProPainter.pth'))
-dl('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth', os.path.join(weights_dir, 'raft-things.pth'))
-dl('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/i3d_rgb_imagenet.pt', os.path.join(weights_dir, 'i3d_rgb_imagenet.pt'))
+downloads = [
+    ('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth', os.path.join(weights_dir, 'ProPainter.pth')),
+    ('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth', os.path.join(weights_dir, 'raft-things.pth')),
+    ('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/i3d_rgb_imagenet.pt', os.path.join(weights_dir, 'i3d_rgb_imagenet.pt')),
+]
+failed = False
+for url, path in downloads:
+    try:
+        dl(url, path)
+    except Exception:
+        failed = True
+if failed:
+    sys.exit(1)
 "@
 & $PythonExe -c $propainter_script
-Write-OK "Đã kiểm tra weights ProPainter."
+if ($LASTEXITCODE -ne 0) {
+    Write-Warn "Tải một số trọng số ProPainter thất bại. ProPainter có thể không hoạt động; hãy chạy lại setup để thử lại."
+} else {
+    Write-OK "Đã kiểm tra weights ProPainter."
+}
 
 if (-not (Test-Path "$ProjectRoot\models\latentsync\scripts\inference.py")) {
     Write-Host "Đang tải mã nguồn LatentSync (Lip-Sync)..."
@@ -252,24 +278,43 @@ if (-not (Test-Path "$gptSoVitsPretrainedDir\chinese-roberta-wwm-ext-large")) {
     Write-Host "Đang tải GPT-SoVITS Pretrained Models (sẽ tốn thời gian)..." -ForegroundColor Yellow
     $gpt_script = @"
 import os
+import sys
 import urllib.request
 import zipfile
 
 def dl(url, path):
-    if not os.path.exists(path):
-        print(f'Downloading {os.path.basename(path)}...')
-        try:
-            urllib.request.urlretrieve(url, path)
-        except Exception as e:
-            print(f'Lỗi khi tải {path}: {e}')
+    # Download to a .part temp and atomically replace on success so an interrupted download
+    # never leaves a truncated zip behind; raise on failure so the caller can surface it.
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return
+    tmp = path + '.part'
+    print(f'Downloading {os.path.basename(path)}...')
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        if os.path.getsize(tmp) == 0:
+            raise IOError('file rỗng sau khi tải')
+        os.replace(tmp, path)
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        print(f'Lỗi khi tải {os.path.basename(path)}: {e}', file=sys.stderr)
+        raise
 
 zip_path = os.path.join(r'$ProjectRoot', 'GPT-SoVITS', 'pretrained_models.zip')
-dl('https://huggingface.co/lj1995/GPT-SoVITS/resolve/main/pretrained_models.zip', zip_path)
+try:
+    dl('https://huggingface.co/lj1995/GPT-SoVITS/resolve/main/pretrained_models.zip', zip_path)
+except Exception:
+    sys.exit(1)
 
 if os.path.exists(zip_path):
     print('Extracting pretrained models...')
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(os.path.join(r'$ProjectRoot', 'GPT-SoVITS'))
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(os.path.join(r'$ProjectRoot', 'GPT-SoVITS'))
+    except zipfile.BadZipFile as e:
+        print(f'File zip hỏng: {e}', file=sys.stderr)
+        os.remove(zip_path)
+        sys.exit(1)
     os.remove(zip_path)
 "@
     & $PythonExe -c $gpt_script

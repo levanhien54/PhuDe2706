@@ -328,7 +328,12 @@ function createMain() {
 
   // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http') || url.startsWith('https')) shell.openExternal(url);
+    // Check the parsed scheme (not a string prefix): startsWith('http') also matched
+    // 'httpfoo://...' and forwarded arbitrary schemes to the OS handler.
+    try {
+      const { protocol } = new URL(url);
+      if (protocol === 'http:' || protocol === 'https:') shell.openExternal(url);
+    } catch { /* invalid URL — deny */ }
     return { action: 'deny' };
   });
 

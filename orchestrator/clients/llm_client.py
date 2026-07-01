@@ -119,7 +119,10 @@ class LLMClient(BaseClient):
             parsed = json.loads(raw_out)
             if isinstance(parsed, dict):
                 parsed = [parsed]
-            if parsed and isinstance(parsed, list) and parsed[0].get("translated"):
+            # Guard parsed[0] is a dict: a vLLM backend (no enforced schema) may return a JSON
+            # array of bare strings, and str.get would raise AttributeError (not in the except
+            # tuple) — which would escape this method and abort the whole translate stage.
+            if parsed and isinstance(parsed, list) and isinstance(parsed[0], dict) and parsed[0].get("translated"):
                 return parsed[0]["translated"]
         except (json.JSONDecodeError, IndexError, KeyError):
             match = re.search(r'\[.*\]', raw_out, re.DOTALL)
@@ -128,7 +131,7 @@ class LLMClient(BaseClient):
                     parsed = json.loads(match.group(0))
                     if isinstance(parsed, dict):
                         parsed = [parsed]
-                    if parsed and parsed[0].get("translated"):
+                    if parsed and isinstance(parsed[0], dict) and parsed[0].get("translated"):
                         return parsed[0]["translated"]
                 except (json.JSONDecodeError, IndexError, KeyError):
                     pass
@@ -260,7 +263,14 @@ class LLMClient(BaseClient):
             for seg in result:
                 if seg.translated and _has_cjk(seg.translated):
                     log.warning("translation_cjk_leak", original=seg.text[:40])
-                    fixed = await self._translate_one(seg.text, target_lang, target_style, duration=seg.duration)
+                    # Never let a single repair failure abort the stage — fall back to stripping
+                    # CJK so TTS still gets clean text. (CancelledError is BaseException, so a
+                    # job cancel still propagates through this except Exception.)
+                    try:
+                        fixed = await self._translate_one(seg.text, target_lang, target_style, duration=seg.duration)
+                    except Exception as e:
+                        log.warning("translation_cjk_repair_failed", error=str(e))
+                        fixed = None
                     seg.translated = fixed if (fixed and not _has_cjk(fixed)) else _strip_cjk(seg.translated)
 
         log.info("llm_translate_done")

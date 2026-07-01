@@ -74,7 +74,10 @@ if (Test-Path "$Src\models\ollama") {
     OK ("models\ollama  ({0:N1} GB)" -f ($sz/1GB))
 } elseif (Test-Path $ollamaLocal) {
     Info "Dang chep model tu $ollamaLocal vao package..."
-    robocopy $ollamaLocal "$Dest\models\ollama" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    # ~/.ollama/models IS the store (contains blobs/ + manifests/), and run_native.ps1 sets
+    # OLLAMA_MODELS to ...\models\ollama\models, so copy one level deeper than the primary
+    # branch (which mirrors the whole models\ollama tree that already includes the inner models\).
+    robocopy $ollamaLocal "$Dest\models\ollama\models" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
     $sz = (Get-ChildItem $ollamaLocal -Recurse -File | Measure-Object Length -Sum).Sum
     OK ("models\ollama  ({0:N1} GB)" -f ($sz/1GB))
 } else {

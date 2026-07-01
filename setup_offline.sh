@@ -34,26 +34,26 @@ PIP_EXE="$PROJECT_ROOT/venv/bin/pip"
 # 2. Cài đặt các thư viện từ thư mục Offline Wheels
 write_step "Cài đặt Backend từ Offline Wheels (Siêu Tốc)"
 
-BASE_PIP_ARGS="--no-index --find-links $OFFLINE_DIR"
+BASE_PIP_ARGS=(--no-index --find-links "$OFFLINE_DIR")
 
 echo "Cài đặt PyTorch..."
-"$PIP_EXE" install $BASE_PIP_ARGS torch torchvision torchaudio
+"$PIP_EXE" install "${BASE_PIP_ARGS[@]}" torch torchvision torchaudio
 
 echo "Cài đặt Orchestrator..."
-"$PIP_EXE" install $BASE_PIP_ARGS -r "$PROJECT_ROOT/orchestrator/requirements.txt"
+"$PIP_EXE" install "${BASE_PIP_ARGS[@]}" -r "$PROJECT_ROOT/orchestrator/requirements.txt"
 echo "Cài đặt WhisperX..."
-"$PIP_EXE" install $BASE_PIP_ARGS -r "$PROJECT_ROOT/whisperx-service/requirements.txt"
+"$PIP_EXE" install "${BASE_PIP_ARGS[@]}" -r "$PROJECT_ROOT/whisperx-service/requirements.txt"
 echo "Cài đặt TTS..."
-"$PIP_EXE" install $BASE_PIP_ARGS -r "$PROJECT_ROOT/tts-service/requirements.txt"
+"$PIP_EXE" install "${BASE_PIP_ARGS[@]}" -r "$PROJECT_ROOT/tts-service/requirements.txt"
 
 echo "Cài đặt các gói phụ thuộc mở rộng..."
-"$PIP_EXE" install $BASE_PIP_ARGS demucs vllm einops scipy huggingface_hub diffusers
+"$PIP_EXE" install "${BASE_PIP_ARGS[@]}" demucs vllm einops scipy huggingface_hub diffusers
 echo "Cài đặt mmcv (cần cho ProPainter)..."
-"$PIP_EXE" install $BASE_PIP_ARGS "mmcv>=2.0.0"
+"$PIP_EXE" install "${BASE_PIP_ARGS[@]}" "mmcv>=2.0.0"
 
 if [ -f "$PROJECT_ROOT/models/latentsync/requirements.txt" ]; then
     echo "Cài đặt phụ thuộc LatentSync..."
-    "$PIP_EXE" install $BASE_PIP_ARGS -r "$PROJECT_ROOT/models/latentsync/requirements.txt"
+    "$PIP_EXE" install "${BASE_PIP_ARGS[@]}" -r "$PROJECT_ROOT/models/latentsync/requirements.txt"
 fi
 
 write_ok "Đã cài đặt xong thư viện Backend."

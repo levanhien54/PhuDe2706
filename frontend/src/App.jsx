@@ -6,6 +6,7 @@ import ReviewModal from './components/ReviewModal';
 import ConfigModal from './components/ConfigModal';
 import WatchFolderModal from './components/WatchFolderModal';
 import Toast from './components/Toast';
+import SystemStatus from './components/SystemStatus';
 import { PlayCircle, Settings, RefreshCw, Film, Edit3, Smile, Eraser, FolderSearch, Ban } from 'lucide-react';
 import { API_BASE } from './api';
 
@@ -353,6 +354,7 @@ function App() {
           <p className="subtitle">Tự động hóa toàn bộ quy trình dịch và lồng tiếng video</p>
         </div>
         <div className="header-actions">
+          <SystemStatus />
           <button className="btn btn-outline" onClick={handleRefresh} disabled={isRefreshing}>
             <RefreshCw size={18} className={isRefreshing ? 'spinner' : ''} /> Làm mới
           </button>

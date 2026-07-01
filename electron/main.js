@@ -240,6 +240,32 @@ function killAllServices() {
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 
+// Polls the orchestrator's /api/health every 1.5s and forwards the aggregate status to the
+// splash window so it can render a live per-service checklist. Also does a one-time nvidia-smi
+// presence check (GPU row). Returns a stop function; call it once the main window opens so the
+// splash (now destroyed) is not written to and no timers leak.
+function pollHealthToSplash(splashWindow) {
+  let stopped = false;
+  const gpuOk = require('child_process').spawnSync('nvidia-smi', ['-L'], { windowsHide: true }).status === 0;
+  function tick() {
+    if (stopped || !splashWindow || splashWindow.isDestroyed()) return;
+    const req = http.request({ host: '127.0.0.1', port: 8000, path: '/api/health', timeout: 2000 }, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        let payload = { gpu: gpuOk ? 'ok' : 'missing', services: {} };
+        try { payload.services = JSON.parse(body).services || {}; } catch {}
+        if (!splashWindow.isDestroyed()) splashWindow.webContents.send('service-status', payload);
+        if (!stopped) setTimeout(tick, 1500);
+      });
+    });
+    req.on('error', () => { if (!splashWindow.isDestroyed()) splashWindow.webContents.send('service-status', { gpu: gpuOk ? 'ok' : 'missing', services: {} }); if (!stopped) setTimeout(tick, 1500); });
+    req.end();
+  }
+  tick();
+  return () => { stopped = true; };
+}
+
 function waitForPort(port, timeoutMs = 90_000) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
@@ -269,14 +295,18 @@ function waitForPort(port, timeoutMs = 90_000) {
 function createSplash() {
   splashWin = new BrowserWindow({
     width: 480,
-    height: 300,
+    height: 420,
     frame: false,
     transparent: true,
     resizable: false,
     center: true,
     alwaysOnTop: true,
     skipTaskbar: true,
-    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
   });
   splashWin.loadFile(path.join(__dirname, 'splash.html'));
   return splashWin;
@@ -418,6 +448,7 @@ app.whenReady().then(async () => {
   createTray();
   createSplash();
   startAllServices();
+  const stopPoll = pollHealthToSplash(splashWin);
 
   try {
     await waitForPort(8000, 120_000);
@@ -427,6 +458,7 @@ app.whenReady().then(async () => {
     // Services may still come up — open window anyway, UI will show errors
   }
 
+  stopPoll();
   createMain();
 });
 
@@ -456,3 +488,4 @@ ipcMain.handle('dialog:selectFolder', async () => {
   });
   return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
 });
+ipcMain.handle('open-logs', () => shell.openPath(path.join(PROJECT_ROOT, 'data')));

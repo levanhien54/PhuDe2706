@@ -27,7 +27,7 @@ trong `app.7z` (venv Python, Python runtime, FFmpeg, Ollama, models).
 2. Đặt **cả hai file trong cùng một thư mục** trên máy đích (ví dụ:
    `Downloads\VideoDubbingSetup\`). `Setup.exe` cần tìm thấy `app.7z`
    ngay bên cạnh nó để giải nén — nếu tách rời hai file, cài đặt sẽ báo lỗi
-   "Không tìm thấy app.7z".
+   "Khong tim thay app.7z trong cung thu muc voi Setup.exe.".
 3. Đảm bảo ổ đĩa chứa thư mục cài đặt còn ít nhất 35 GB trống.
 
 ---
@@ -62,11 +62,13 @@ máy đủ điều kiện:
    ```
    [PASS] GPU NVIDIA: RTX 4080 (driver 551.23)
    [PASS] VRAM: 16.0 GB — dùng VRAM_PROFILE=16gb.
-   [FAIL] Cổng 8000: đang bị chiếm — có thể xung đột khi chạy.
+   [WARN] Cổng 8000: Đang bị chiếm — có thể xung đột khi chạy.
    ```
 
 3. Cuối bảng có dòng tổng kết:
-   - **`SẴN SÀNG`** — không có `[FAIL]` nào, có thể mở ứng dụng.
+   - **`SẴN SÀNG (n cảnh báo)`** — không có `[FAIL]` nào, có thể mở ứng dụng
+     (kể cả khi còn `[WARN]`, ví dụ cổng đang bị chiếm — không chặn cài,
+     chỉ là cảnh báo nên xử lý sớm).
    - **`CHƯA ĐẠT: N lỗi`** — cần xử lý các dòng `[FAIL]` trước khi dùng.
 4. Kết quả cũng được lưu lại thành file **`preflight_report.txt`** ngay
    cạnh script, có thể mở lại bất cứ lúc nào để xem hoặc gửi cho người hỗ trợ.
@@ -76,20 +78,22 @@ Các mục được kiểm tra: hệ điều hành, GPU + driver, VRAM, dung lư
 trống, các cổng mạng (8000, 8001, 9880, 3900, 11434, 5173), và (nếu chạy
 trong thư mục đã cài) tính toàn vẹn của bundle — các file/model bắt buộc.
 
-### Xử lý từng trường hợp `[FAIL]`
+### Xử lý từng trường hợp `[FAIL]` / `[WARN]`
 
 | Mục báo lỗi | Nguyên nhân | Cách khắc phục |
 |---|---|---|
-| **GPU NVIDIA** | Máy không có GPU NVIDIA, hoặc chưa cài driver — không tìm thấy `nvidia-smi`. | Cắm/kiểm tra GPU NVIDIA vật lý; cài driver NVIDIA mới nhất từ trang chủ NVIDIA rồi khởi động lại máy. |
+| **GPU NVIDIA** *(lỗi)* | Máy không có GPU NVIDIA, hoặc chưa cài driver — không tìm thấy `nvidia-smi`. | Cắm/kiểm tra GPU NVIDIA vật lý; cài driver NVIDIA mới nhất từ trang chủ NVIDIA rồi khởi động lại máy. |
 | **Driver GPU** *(cảnh báo)* | Driver hiện tại cũ hơn 452.39, có thể không chạy được CUDA 11.8. | Vào [nvidia.com/drivers](https://www.nvidia.com/drivers) tải bản mới nhất cho đúng dòng GPU, cài rồi khởi động lại. |
-| **VRAM** | GPU có VRAM dưới 16 GB — không đủ để chạy các model AI. | Cần đổi sang GPU ≥ 16 GB VRAM. Không có cách giảm yêu cầu này (đã là ngưỡng tối thiểu của hệ thống). |
-| **Dung lượng đĩa** | Ổ chứa thư mục cài còn dưới 35 GB trống. | Giải phóng bớt dung lượng (xóa file rác, chuyển bớt dữ liệu sang ổ khác), hoặc chọn cài vào ổ đĩa khác còn nhiều dung lượng hơn. |
-| **Cổng (8000/8001/9880/3900/11434/5173)** | Có chương trình khác đang chiếm dụng cổng mạng mà Video Dubbing cần dùng. | Đóng chương trình đang chiếm cổng đó (ví dụ Ollama đang chạy sẵn, server khác đang lắng nghe cùng cổng), rồi chạy lại `Kiem-tra-he-thong.bat`. Chi tiết cách tìm tiến trình chiếm cổng: xem file `03-XU-LY-SU-CO.md`. |
-| **Bundle: <tên file/thư mục>** | Bản `app.7z` giải nén thiếu file hoặc model (gói bị lỗi/cắt ngắn khi tải/copy). | Xóa thư mục đã cài, tải lại `Setup.exe` + `app.7z` (đảm bảo copy đủ, không bị ngắt giữa chừng), cài lại từ đầu. |
-| **Hệ điều hành** | Máy không phải Windows 10/11 64-bit. | Cần nâng cấp lên Windows 10/11 64-bit — hệ thống không hỗ trợ Windows cũ hơn hoặc bản 32-bit. |
+| **VRAM** *(lỗi)* | GPU có VRAM dưới 16 GB — không đủ để chạy các model AI. | Cần đổi sang GPU ≥ 16 GB VRAM. Không có cách giảm yêu cầu này (đã là ngưỡng tối thiểu của hệ thống). |
+| **Dung lượng đĩa** *(lỗi)* | Ổ chứa thư mục cài còn dưới 35 GB trống. | Giải phóng bớt dung lượng (xóa file rác, chuyển bớt dữ liệu sang ổ khác), hoặc chọn cài vào ổ đĩa khác còn nhiều dung lượng hơn. |
+| **Cổng (8000/8001/9880/3900/11434/5173)** *(cảnh báo, không chặn cài)* | Có chương trình khác đang chiếm dụng cổng mạng mà Video Dubbing cần dùng. Đây chỉ là cảnh báo — máy vẫn báo `SẴN SÀNG` dù còn cổng bị chiếm, nhưng dịch vụ tương ứng có thể xung đột khi chạy. | Nên đóng chương trình đang chiếm cổng đó (ví dụ Ollama đang chạy sẵn, server khác đang lắng nghe cùng cổng) hoặc đổi cổng, rồi chạy lại `Kiem-tra-he-thong.bat` để xác nhận cổng đã trống. Chi tiết cách tìm tiến trình chiếm cổng: xem file `03-XU-LY-SU-CO.md`. |
+| **Bundle: <tên file/thư mục>** *(lỗi)* | Bản `app.7z` giải nén thiếu file hoặc model (gói bị lỗi/cắt ngắn khi tải/copy). | Xóa thư mục đã cài, tải lại `Setup.exe` + `app.7z` (đảm bảo copy đủ, không bị ngắt giữa chừng), cài lại từ đầu. |
+| **Hệ điều hành** *(lỗi)* | Máy không phải Windows 10/11 64-bit. | Cần nâng cấp lên Windows 10/11 64-bit — hệ thống không hỗ trợ Windows cũ hơn hoặc bản 32-bit. |
 
 Sau khi xử lý xong các mục `[FAIL]`, chạy lại `Kiem-tra-he-thong.bat` để
-xác nhận kết quả `SẴN SÀNG` trước khi mở "Video Dubbing".
+xác nhận kết quả `SẴN SÀNG` trước khi mở "Video Dubbing". Các mục `[WARN]`
+(ví dụ cổng đang bị chiếm) không bắt buộc phải xử lý để cài đặt/chạy được,
+nhưng nên kiểm tra lại nếu gặp lỗi xung đột dịch vụ sau này.
 
 ---
 

@@ -113,8 +113,11 @@ Start-Process -FilePath $PythonExe -ArgumentList "-m uvicorn orchestrator.api:ap
 
 # 4. Start vLLM (nếu dùng vllm)
 if ($env:LLM_BACKEND -eq "vllm") {
-    Write-Host "  -> Đang bật vLLM Server (Port 8080) với model $($env:LLM_MODEL)..."
-    Start-Process -FilePath $PythonExe -ArgumentList "-m vllm.entrypoints.openai.api_server --model $($env:LLM_MODEL) --port 8080" -WorkingDirectory "$ProjectRoot" -WindowStyle Minimized
+    $vllmArgs = "-m vllm.entrypoints.openai.api_server --model $($env:LLM_MODEL) --port 8080"
+    if ($env:LLM_QUANTIZATION) { $vllmArgs += " --quantization $($env:LLM_QUANTIZATION)" }
+    $quantNote = if ($env:LLM_QUANTIZATION) { " [quant: $($env:LLM_QUANTIZATION)]" } else { "" }
+    Write-Host "  -> Đang bật vLLM Server (Port 8080) với model $($env:LLM_MODEL)$quantNote..."
+    Start-Process -FilePath $PythonExe -ArgumentList $vllmArgs -WorkingDirectory "$ProjectRoot" -WindowStyle Minimized
 }
 
 # 5. Start Ollama

@@ -8,7 +8,13 @@ from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
 
-_LLM_VRAM_GB = 9.0
+def _llm_vram_gb(settings: Settings) -> float:
+    """VRAM to reserve for the LLM. AWQ/FP8-quantized Qwen2.5-14B on vLLM needs ~4.5GB; Ollama's
+    Q4 build or full-precision vLLM needs ~9GB. Halving the reservation lets TTS load alongside
+    the LLM inside a 16GB budget."""
+    if settings.llm_backend == "vllm" and settings.llm_quantization:
+        return 4.5
+    return 9.0
 
 def merge_segments(segments: list[SrtSegment], max_gap: float = 0.8) -> list[SrtSegment]:
     if not segments:
@@ -62,7 +68,7 @@ async def run_translate(
             log.warning("translate_resume_failed", error=str(e))
 
     try:
-        async with vram.slot("llm", _LLM_VRAM_GB):
+        async with vram.slot("llm", _llm_vram_gb(settings)):
             client = LLMClient(settings)
             merged_segments = merge_segments(segments)
             translated = await client.translate_batch(merged_segments, target_lang=job.target_language, target_style=job.target_style)

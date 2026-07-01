@@ -49,7 +49,12 @@ class Settings(BaseSettings):
     propainter_fp16: bool = Field(True, validation_alias="PROPAINTER_FP16")
     propainter_resize_ratio: float = Field(1.0, validation_alias="PROPAINTER_RESIZE_RATIO")
     propainter_subvideo_length: int = Field(80, validation_alias="PROPAINTER_SUBVIDEO_LENGTH")
+    # NEO-style CPU offload for the vLLM backend: offload cpu_offload_gb of LLM weights to CPU RAM
+    # (trades speed for VRAM so a bigger model fits a 16GB GPU). Wired to vLLM --cpu-offload-gb.
     enable_cpu_offload: bool = Field(False, validation_alias="ENABLE_CPU_OFFLOAD")
+    cpu_offload_gb: int = Field(4, validation_alias="CPU_OFFLOAD_GB")
+    # Reserved: elastic KV-cache / GPU sharing (kvcached). Not yet wired — needs the kvcached
+    # library + a compatible vLLM launch on the GPU box; setting it today logs a warning and no-ops.
     enable_kvcached: bool = Field(False, validation_alias="ENABLE_KVCACHED")
 
     # Paths

@@ -115,6 +115,13 @@ Start-Process -FilePath $PythonExe -ArgumentList "-m uvicorn orchestrator.api:ap
 if ($env:LLM_BACKEND -eq "vllm") {
     $vllmArgs = "-m vllm.entrypoints.openai.api_server --model $($env:LLM_MODEL) --port 8080"
     if ($env:LLM_QUANTIZATION) { $vllmArgs += " --quantization $($env:LLM_QUANTIZATION)" }
+    if ($env:ENABLE_CPU_OFFLOAD -eq "true" -or $env:ENABLE_CPU_OFFLOAD -eq "1") {
+        $offGb = if ($env:CPU_OFFLOAD_GB) { $env:CPU_OFFLOAD_GB } else { "4" }
+        $vllmArgs += " --cpu-offload-gb $offGb"
+    }
+    if ($env:ENABLE_KVCACHED -eq "true" -or $env:ENABLE_KVCACHED -eq "1") {
+        Write-Host "  [!!] ENABLE_KVCACHED được bật nhưng CHƯA tích hợp (cần thư viện kvcached trên máy GPU) — bỏ qua." -ForegroundColor Yellow
+    }
     $quantNote = if ($env:LLM_QUANTIZATION) { " [quant: $($env:LLM_QUANTIZATION)]" } else { "" }
     Write-Host "  -> Đang bật vLLM Server (Port 8080) với model $($env:LLM_MODEL)$quantNote..."
     Start-Process -FilePath $PythonExe -ArgumentList $vllmArgs -WorkingDirectory "$ProjectRoot" -WindowStyle Minimized

@@ -20,7 +20,7 @@ from orchestrator.pipeline import (
 from orchestrator.database import (
     save_job, update_job_status, get_job, get_job_by_filename,
     save_segments, get_segments, update_segment_translation,
-    get_jobs_by_filenames, fail_stale_jobs,
+    get_jobs_by_filenames, get_jobs_by_status, fail_stale_jobs,
     get_watch_config, set_watch_config,
     get_app_config, set_app_config
 )
@@ -61,6 +61,15 @@ async def cleanup_loop():
                 continue
             import time
             now = time.time()
+            # A temp dir is named after the job base_name (filename without extension). Match
+            # active jobs on base_name directly rather than reconstructing filename+ext: the
+            # old approach queried `item + ext` with lowercase extensions and missed jobs whose
+            # stored extension case differs (SQLite compares case-sensitively), e.g. '.MP4',
+            # so it could wipe the temp dir of a job still AWAITING_REVIEW.
+            active_base_names = {
+                os.path.splitext(j["filename"])[0]
+                for j in get_jobs_by_status(_active_statuses)
+            }
             for item in os.listdir(temp_dir):
                 try:
                     path = os.path.join(temp_dir, item)
@@ -69,13 +78,7 @@ async def cleanup_loop():
                     if now - os.path.getmtime(path) <= 86400:
                         continue
                     # Never wipe dirs whose job is still active (AWAITING_REVIEW can sit >24h)
-                    is_active = False
-                    for ext in ALLOWED_EXTENSIONS:
-                        job_info = get_job_by_filename(item + ext)
-                        if job_info and job_info.get("status") in _active_statuses:
-                            is_active = True
-                            break
-                    if is_active:
+                    if item in active_base_names:
                         continue
                     shutil.rmtree(path, ignore_errors=True)
                     log.info("cleaned_up_stale_temp", path=path)

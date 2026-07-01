@@ -159,6 +159,20 @@ def get_jobs_by_filenames(filenames: list) -> dict:
     return result
 
 
+def get_jobs_by_status(statuses) -> list:
+    """Return job dicts whose status is in `statuses`. Used by the temp-cleanup backstop to
+    match a temp dir against active jobs by base_name (robust to filename extension case)."""
+    statuses = list(statuses)
+    if not statuses:
+        return []
+    with _connect(row_factory=True) as conn:
+        placeholders = ",".join("?" * len(statuses))
+        rows = conn.execute(
+            f"SELECT * FROM jobs WHERE status IN ({placeholders})", statuses
+        ).fetchall()
+    return [_row_to_job(row) for row in rows]
+
+
 def fail_stale_jobs(timeout_hours: int = 2) -> int:
     """Startup recovery: time-out stuck PROCESSING jobs, and converge orphaned CANCELLING rows.
 

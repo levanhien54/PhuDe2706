@@ -117,6 +117,9 @@ _diarize_model = None
 # Serialize lazy model/cache initialization so two concurrent first-requests can't both
 # load (double VRAM, one instance leaked) or race on the _align_cache dict.
 _load_lock = threading.Lock()
+# Serialize actual inference: the shared _model (CTranslate2) is not safe for concurrent
+# generate() calls, and only one job can use the single GPU at a time anyway.
+_infer_lock = threading.Lock()
 
 
 @app.on_event("startup")
@@ -224,49 +227,58 @@ async def transcribe(file: UploadFile = File(...)):
         tmp.close()
         log.info("received %.2f MB -> %s", len(data) / 1e6, tmp.name)
 
-        audio = whisperx.load_audio(tmp.name)
-        log.info("audio loaded: %.1fs of samples", len(audio) / 16000.0)
+        def _run_inference():
+            # Runs in a worker thread so the multi-minute, CPU/GPU-bound whisperx calls do not
+            # block the asyncio event loop. load_audio (ffmpeg decode) can overlap across
+            # requests; the model work is serialized under _infer_lock.
+            audio = whisperx.load_audio(tmp.name)
+            log.info("audio loaded: %.1fs of samples", len(audio) / 16000.0)
 
-        model = get_model()
-        t0 = time.monotonic()
-        result = model.transcribe(audio, language=LANGUAGE, batch_size=BATCH_SIZE)
-        lang = result.get("language", "en")
-        log.info("transcribe done in %.1fs: language=%s raw_segments=%d",
-                 time.monotonic() - t0, lang, len(result.get("segments", [])))
-
-        # word-level alignment (optional — fall back to coarse segments on failure)
-        try:
-            model_a, metadata = get_align_model(lang)
-            t0 = time.monotonic()
-            result = whisperx.align(result["segments"], model_a, metadata, audio, DEVICE,
-                                    return_char_alignments=False)
-            log.info("alignment done in %.1fs", time.monotonic() - t0)
-        except Exception:
-            log.warning("alignment failed, using coarse segments:\n%s", traceback.format_exc())
-
-        # optional diarization
-        diarize = get_diarize_model()
-        if diarize is not None:
-            try:
+            with _infer_lock:
+                model = get_model()
                 t0 = time.monotonic()
-                diarize_segments = diarize(audio)
-                result = whisperx.assign_word_speakers(diarize_segments, result)
-                log.info("diarization done in %.1fs", time.monotonic() - t0)
-            except Exception:
-                log.warning("diarization failed, segments will have speaker=null:\n%s",
-                            traceback.format_exc())
+                result = model.transcribe(audio, language=LANGUAGE, batch_size=BATCH_SIZE)
+                lang = result.get("language", "en")
+                log.info("transcribe done in %.1fs: language=%s raw_segments=%d",
+                         time.monotonic() - t0, lang, len(result.get("segments", [])))
 
-        segments = []
-        for s in result.get("segments", []):
-            text = (s.get("text") or "").strip()
-            if not text:
-                continue
-            segments.append({
-                "start": float(s.get("start", 0.0)),
-                "end": float(s.get("end", 0.0)),
-                "text": text,
-                "speaker": s.get("speaker"),
-            })
+                # word-level alignment (optional — fall back to coarse segments on failure)
+                try:
+                    model_a, metadata = get_align_model(lang)
+                    t0 = time.monotonic()
+                    result = whisperx.align(result["segments"], model_a, metadata, audio, DEVICE,
+                                            return_char_alignments=False)
+                    log.info("alignment done in %.1fs", time.monotonic() - t0)
+                except Exception:
+                    log.warning("alignment failed, using coarse segments:\n%s", traceback.format_exc())
+
+                # optional diarization
+                diarize = get_diarize_model()
+                if diarize is not None:
+                    try:
+                        t0 = time.monotonic()
+                        diarize_segments = diarize(audio)
+                        result = whisperx.assign_word_speakers(diarize_segments, result)
+                        log.info("diarization done in %.1fs", time.monotonic() - t0)
+                    except Exception:
+                        log.warning("diarization failed, segments will have speaker=null:\n%s",
+                                    traceback.format_exc())
+
+            out = []
+            for s in result.get("segments", []):
+                text = (s.get("text") or "").strip()
+                if not text:
+                    continue
+                out.append({
+                    "start": float(s.get("start", 0.0)),
+                    "end": float(s.get("end", 0.0)),
+                    "text": text,
+                    "speaker": s.get("speaker"),
+                })
+            return out
+
+        import asyncio
+        segments = await asyncio.to_thread(_run_inference)
         log.info("transcribe request complete: %d segments in %.1fs total",
                  len(segments), time.monotonic() - req_start)
         return {"segments": segments}

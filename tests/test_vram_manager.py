@@ -40,6 +40,18 @@ async def test_slot_context_manager(mgr_16):
 
 
 @pytest.mark.asyncio
+async def test_acquire_over_budget_raises_fast(mgr_16):
+    # A reservation larger than the whole budget must fail fast, not deadlock forever
+    # (regression: TTS_CONCURRENCY=5 -> 20GB on the 16GB profile hung the worker).
+    with pytest.raises(ValueError):
+        await mgr_16.acquire("tts", 20.0)
+    assert mgr_16.available_gb() == 16.0  # failed acquire allocated nothing
+    # exactly total is still allowed
+    await mgr_16.acquire("edge", 16.0)
+    assert mgr_16.available_gb() == 0.0
+
+
+@pytest.mark.asyncio
 async def test_waits_for_capacity(mgr_16):
     await mgr_16.acquire("big_model", 14.0)
     # Now only 2GB available, requesting 5GB should wait

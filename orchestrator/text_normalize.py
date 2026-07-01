@@ -434,6 +434,21 @@ _JA_BIG = ["", "まん", "おく", "ちょう", "けい"]
 _JA_TSU = {1: "ひとつ", 2: "ふたつ", 3: "みっつ", 4: "よっつ", 5: "いつつ",
            6: "むっつ", 7: "ななつ", 8: "やっつ", 9: "ここのつ", 10: "とお"}
 
+# Common counters with gemination/rendaku, correct for 1..10 (the overwhelmingly common range).
+# Each entry: (base kana reading, {number: special form}). Numbers not in the table but 1..10 read
+# _ja_read(n)+reading (regular, e.g. 2本 にほん); numbers >10 keep the KANJI counter so a JP-trained
+# model applies its own reading (avoids a forced-wrong kana). Irregular counters (階/月/日) skipped.
+_JA_COUNTERS = {
+    "個": ("こ", {1: "いっこ", 6: "ろっこ", 8: "はっこ", 10: "じゅっこ"}),
+    "回": ("かい", {1: "いっかい", 6: "ろっかい", 8: "はっかい", 10: "じゅっかい"}),
+    "冊": ("さつ", {1: "いっさつ", 8: "はっさつ", 10: "じゅっさつ"}),
+    "歳": ("さい", {1: "いっさい", 8: "はっさい", 10: "じゅっさい", 20: "はたち"}),
+    "本": ("ほん", {1: "いっぽん", 3: "さんぼん", 6: "ろっぽん", 8: "はっぽん", 10: "じゅっぽん"}),
+    "匹": ("ひき", {1: "いっぴき", 3: "さんびき", 6: "ろっぴき", 8: "はっぴき", 10: "じゅっぴき"}),
+    "杯": ("はい", {1: "いっぱい", 3: "さんばい", 6: "ろっぱい", 8: "はっぱい", 10: "じゅっぱい"}),
+    "分": ("ふん", {1: "いっぷん", 3: "さんぷん", 4: "よんぷん", 6: "ろっぷん", 8: "はっぷん", 10: "じゅっぷん"}),
+}
+
 
 def _ja_4(n: int) -> str:
     """Read 1..9999 in Sino-Japanese kana with 百/千 rendaku."""
@@ -483,6 +498,22 @@ def normalize_japanese(text: str) -> str:
     # つ: native counting 1..10 (ひとつ…とお).
     text = re.sub(r"(\d+)\s*つ",
                   lambda m: _JA_TSU.get(int(m.group(1)), _ja_read(int(m.group(1))) + "つ"), text)
+    # 時 (o'clock): irregular 4→よじ, 7→しちじ, 9→くじ; 1..12 read kana, else keep kanji. Never
+    # match 時間 (duration) — that stays kanji for the model to read (さんじかん).
+    _JI = {4: "よじ", 7: "しちじ", 9: "くじ"}
+    text = re.sub(r"(\d+)\s*時(?!間)", lambda m: (
+        _JI.get(int(m.group(1)), _ja_read(int(m.group(1))) + "じ")
+        if 1 <= int(m.group(1)) <= 12 else _ja_read(int(m.group(1))) + "時"), text)
+    # Counters with gemination (個/本/回/分…): correct kana for 1..10, kanji kept for >10.
+    for _c, (_reading, _forms) in _JA_COUNTERS.items():
+        def _crepl(m, reading=_reading, forms=_forms, c=_c):
+            n = int(m.group(1))
+            if n in forms:
+                return forms[n]
+            if 1 <= n <= 10:
+                return _ja_read(n) + reading
+            return _ja_read(n) + c
+        text = re.sub(rf"(\d+)\s*{_c}", _crepl, text)
     text = re.sub(r"\d+", lambda m: _ja_read(int(m.group())), text)
     return re.sub(r"\s{2,}", " ", text).strip()
 

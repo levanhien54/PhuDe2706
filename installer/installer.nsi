@@ -75,6 +75,7 @@ Section "Install"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\icon.ico"
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\icon.ico"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\Kiem tra he thong.lnk" "$INSTDIR\Kiem-tra-he-thong.bat" "" "$INSTDIR\icon.ico"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall ${APPNAME}.lnk" "$INSTDIR\Uninstall.exe"
 
   ; uninstaller + Add/Remove Programs (per-user / HKCU)
@@ -93,6 +94,11 @@ Section "Install"
   WriteRegDWORD HKCU "${ARPKEY}" "EstimatedSize" $2
 
   DetailPrint "Hoan tat. Mo bang shortcut '${APPNAME}' tren Desktop."
+
+  ; auto-run preflight so the user sees the system-check report right away
+  ${If} ${FileExists} "$INSTDIR\Kiem-tra-he-thong.bat"
+    ExecShell "open" "$INSTDIR\Kiem-tra-he-thong.bat"
+  ${EndIf}
 SectionEnd
 
 ; ---------------------------------------------------------------------------

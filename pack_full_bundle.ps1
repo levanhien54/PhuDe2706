@@ -117,6 +117,13 @@ if (Test-Path "$Src\icon.ico") { Copy-Item "$Src\icon.ico" "$Stage\icon.ico" -Fo
 foreach ($d in @('data\input','data\output','data\temp')) { New-Item -ItemType Directory -Force -Path "$Stage\$d" | Out-Null }
 OK "structure ready"
 
+# --- 10. preflight + docs ---
+Step "Preflight + tài liệu"
+foreach ($f in @('preflight_check.ps1','Kiem-tra-he-thong.bat')) {
+    if (Test-Path "$Src\$f") { Copy-Item "$Src\$f" "$Stage\$f" -Force; OK $f }
+}
+if (Test-Path "$Src\HUONG-DAN") { Mirror "$Src\HUONG-DAN" "$Stage\HUONG-DAN"; OK "HUONG-DAN" }
+
 # --- Summary ---
 $total = (Get-ChildItem $Stage -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
 Write-Host ""

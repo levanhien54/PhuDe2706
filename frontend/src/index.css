@@ -844,6 +844,7 @@ body {
   border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
 .sysstatus-badge.ok { background: #10321f; color: #4ade80; }
 .sysstatus-badge.warn { background: #3a2a10; color: #fbbf24; }
+.sysstatus-badge.err { background: #3a1515; color: #f87171; }
 .sysstatus-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .sysstatus-dot.ok { background: #4ade80; } .sysstatus-dot.down { background: #f87171; }
 .sysstatus-panel { position: absolute; right: 0; top: 130%; z-index: 50; min-width: 240px;

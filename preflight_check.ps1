@@ -1,7 +1,15 @@
 ﻿param([string]$Root = $PSScriptRoot)
 $ErrorActionPreference = 'Continue'
+# Render Vietnamese (UTF-8) output correctly under Windows PowerShell 5.1, whose default console
+# encoding garbles diacritics even when the launcher .bat runs `chcp 65001`.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $results = New-Object System.Collections.ArrayList
 function Add-Result($name, $status, $msg) { [void]$results.Add([pscustomobject]@{Name=$name;Status=$status;Msg=$msg}) }
+
+# An installed bundle already occupies ~20 GB on this drive, so once it is present we only need
+# working space; a bare pre-install run still requires the full free-space budget.
+$hasBundle = Test-Path (Join-Path $Root "Video Dubbing.exe")
+$diskMin = if ($hasBundle) { 15 } else { 35 }
 
 # 1. OS
 if ([Environment]::Is64BitOperatingSystem -and [Environment]::OSVersion.Version.Major -ge 10) {
@@ -32,8 +40,8 @@ if (-not $smi) {
 try {
     $drive = (Get-Item $Root).PSDrive.Name
     $free = (Get-PSDrive $drive).Free
-    if ($free -ge 35GB) { Add-Result "Dung lượng đĩa" "PASS" ("{0:N0} GB trống trên ổ {1}:" -f ($free/1GB), $drive) }
-    else { Add-Result "Dung lượng đĩa" "FAIL" ("Chỉ {0:N0} GB trống trên ổ {1}: — cần ≥ 35 GB." -f ($free/1GB), $drive) }
+    if ($free -ge ($diskMin*1GB)) { Add-Result "Dung lượng đĩa" "PASS" ("{0:N0} GB trống trên ổ {1}:" -f ($free/1GB), $drive) }
+    else { Add-Result "Dung lượng đĩa" "FAIL" ("Chỉ {0:N0} GB trống trên ổ {1}: — cần ≥ {2} GB." -f ($free/1GB), $drive, $diskMin) }
 } catch { Add-Result "Dung lượng đĩa" "WARN" "Không đọc được dung lượng ổ đĩa." }
 
 # 4. Ports
@@ -46,7 +54,6 @@ foreach ($port in 8000,8001,9880,3900,11434,5173) {
 # 5. Bundle integrity (only when -Root points at an installed bundle)
 $req = @("venv\Scripts\python.exe","python-runtime\python.exe","frontend\dist\index.html",".env",
          "ollama\ollama.exe","models\whisper","models\omnivoice","models\ollama\models\blobs","Video Dubbing.exe")
-$hasBundle = Test-Path (Join-Path $Root "Video Dubbing.exe")
 if ($hasBundle) {
     foreach ($rel in $req) {
         if (Test-Path (Join-Path $Root $rel)) { Add-Result "Bundle: $rel" "PASS" "có" }

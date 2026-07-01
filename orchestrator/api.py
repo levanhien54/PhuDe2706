@@ -538,6 +538,7 @@ def _gpu_info():
             ["nvidia-smi", "--query-gpu=name,memory.used,memory.total",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=3,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if out.returncode == 0 and out.stdout.strip():
             name, used, total = [x.strip() for x in out.stdout.strip().splitlines()[0].split(",")]
@@ -578,7 +579,7 @@ async def api_health():
     ready = sum(1 for v in services.values() if v == "up")
     data = {"services": services, "ready": ready, "total": len(services),
             "gpu": await asyncio.to_thread(_gpu_info)}
-    _HEALTH_CACHE.update(ts=now, data=data)
+    _HEALTH_CACHE.update(ts=time.monotonic(), data=data)
     return data
 
 @app.get("/api/jobs/{job_id}/segments")

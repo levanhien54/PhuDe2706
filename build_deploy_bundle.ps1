@@ -76,14 +76,21 @@ foreach ($m in @('whisper','omnivoice','ollama')) {
 if (Test-Path "$Root\node_modules\7zip-bin\win\x64\7za.exe") { OK "7za.exe co (node_modules)" }
 else { Warn "Chua thay 7za.exe -- se can 'npm install' o project root truoc buoc installer." }
 
-# disk free on Stage + Out drives
+# disk free on Stage + Out drives (aggregate per drive: if Stage+Out share a drive their needs sum)
+$need = @{}
 foreach ($pair in @(@($Stage,35),@($Out,20))) {
-    $drv = (Split-Path $pair[0] -Qualifier).TrimEnd(':')
+    $q = Split-Path $pair[0] -Qualifier
+    if (-not $q) { Bad "Duong dan '$($pair[0])' khong co o dia (drive) hop le."; $fail++; continue }
+    $drv = $q.TrimEnd(':')
+    if ($need.ContainsKey($drv)) { $need[$drv] += $pair[1] } else { $need[$drv] = $pair[1] }
+}
+foreach ($drv in $need.Keys) {
+    $req = $need[$drv]
     try {
         $free = (Get-PSDrive $drv -ErrorAction Stop).Free
-        if ($free -ge ($pair[1]*1GB)) { OK ("O {0}: {1:N0} GB trong (>= {2} GB)" -f $drv, ($free/1GB), $pair[1]) }
-        else { Bad ("O {0}: chi {1:N0} GB trong -- can >= {2} GB." -f $drv, ($free/1GB), $pair[1]); $fail++ }
-    } catch { Warn "Khong doc duoc dung luong o $drv (se tao khi build)." }
+        if ($free -ge ($req*1GB)) { OK ("O {0}: {1:N0} GB trong (>= {2} GB)" -f $drv, ($free/1GB), $req) }
+        else { Bad ("O {0}: chi {1:N0} GB trong -- can >= {2} GB." -f $drv, ($free/1GB), $req); $fail++ }
+    } catch { Bad ("O {0}: khong ton tai hoac khong doc duoc -- can >= {1} GB." -f $drv, $req); $fail++ }
 }
 
 if ($fail -gt 0) {
@@ -95,16 +102,21 @@ if ($fail -gt 0) {
 if ($PreflightOnly) { exit 0 }
 
 # ---- 1..3 build chain --------------------------------------------------------
+# The three child scripts use two different failure conventions: pack_full_bundle.ps1 throws
+# (ErrorActionPreference='Stop'); build-electron.ps1 / build_installer.ps1 signal via `exit 1`.
+# Guard for BOTH: try/catch for the throw, then a $LASTEXITCODE check for the exit-code scripts.
+# pack_full_bundle.ps1 ends with an explicit `exit 0` on success, so robocopy's exit code 1 (which
+# robocopy returns on a SUCCESSFUL copy) can no longer be mistaken for a failure here.
 Step "1/3  build-electron.ps1  (rebuild Video Dubbing.exe + frontend/dist)"
-& "$Root\build-electron.ps1"
+try { & "$Root\build-electron.ps1" } catch { Bad "build-electron.ps1 that bai: $_"; exit 1 }
 if ($LASTEXITCODE -ne 0) { Bad "build-electron.ps1 that bai (code $LASTEXITCODE)"; exit 1 }
 
 Step "2/3  pack_full_bundle.ps1 -Stage `"$Stage`"  (stage ~30 GB, may mat nhieu phut)"
-& "$Root\pack_full_bundle.ps1" -Stage $Stage
+try { & "$Root\pack_full_bundle.ps1" -Stage $Stage } catch { Bad "pack_full_bundle.ps1 that bai: $_"; exit 1 }
 if ($LASTEXITCODE -ne 0) { Bad "pack_full_bundle.ps1 that bai (code $LASTEXITCODE)"; exit 1 }
 
 Step "3/3  build_installer.ps1 -Stage `"$Stage`" -Out `"$Out`" -Mx $Mx  (nen ~20 GB + NSIS)"
-& "$Root\build_installer.ps1" -Stage $Stage -Out $Out -Mx $Mx
+try { & "$Root\build_installer.ps1" -Stage $Stage -Out $Out -Mx $Mx } catch { Bad "build_installer.ps1 that bai: $_"; exit 1 }
 if ($LASTEXITCODE -ne 0) { Bad "build_installer.ps1 that bai (code $LASTEXITCODE)"; exit 1 }
 
 Write-Host "`n============================================================" -ForegroundColor Green

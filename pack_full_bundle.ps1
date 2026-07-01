@@ -131,3 +131,7 @@ Write-Host "============================================================" -Foreg
 Write-Host ("  STAGED: $Stage  ({0:N2} GB)" -f ($total/1GB)) -ForegroundColor Green
 Write-Host "  Next:  .\build_installer.ps1 -Stage `"$Stage`"" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green
+
+# Reaching here means every step succeeded (failures throw under ErrorActionPreference='Stop').
+# Force a clean exit code so callers can't misread robocopy's success code (1) as a failure.
+exit 0

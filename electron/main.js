@@ -246,9 +246,13 @@ function killAllServices() {
 // splash (now destroyed) is not written to and no timers leak.
 function pollHealthToSplash(splashWindow) {
   let stopped = false;
-  const gpuOk = require('child_process').spawnSync('nvidia-smi', ['-L'], { windowsHide: true }).status === 0;
+  // Async GPU presence check so we never block the main/UI thread during startup.
+  let gpuOk = false;
+  require('child_process').execFile('nvidia-smi', ['-L'], { windowsHide: true }, (err) => { gpuOk = !err; });
   function tick() {
     if (stopped || !splashWindow || splashWindow.isDestroyed()) return;
+    let scheduled = false;
+    const scheduleNext = () => { if (!scheduled) { scheduled = true; if (!stopped) setTimeout(tick, 1500); } };
     const req = http.request({ host: '127.0.0.1', port: 8000, path: '/api/health', timeout: 2000 }, (res) => {
       let body = '';
       res.on('data', (c) => (body += c));
@@ -256,10 +260,20 @@ function pollHealthToSplash(splashWindow) {
         let payload = { gpu: gpuOk ? 'ok' : 'missing', services: {} };
         try { payload.services = JSON.parse(body).services || {}; } catch {}
         if (!splashWindow.isDestroyed()) splashWindow.webContents.send('service-status', payload);
-        if (!stopped) setTimeout(tick, 1500);
+        scheduleNext();
       });
     });
-    req.on('error', () => { if (!splashWindow.isDestroyed()) splashWindow.webContents.send('service-status', { gpu: gpuOk ? 'ok' : 'missing', services: {} }); if (!stopped) setTimeout(tick, 1500); });
+    // The `timeout` option alone only emits an event; it never aborts the request. Without this a
+    // connected-but-slow orchestrator (busy loading models) would hang the request forever and the
+    // poll loop would stop rescheduling. Destroying with an error routes into the handler below.
+    req.on('timeout', () => req.destroy(new Error('health poll timeout')));
+    // On any failure the orchestrator is unreachable; send an empty services map (the splash keeps
+    // showing ⏳ rather than a harsh ❌ during the brief pre-bind window). The splash treats a
+    // persistently-not-up orchestrator as a down-tick so the "open logs" affordance still appears.
+    req.on('error', () => {
+      if (!splashWindow.isDestroyed()) splashWindow.webContents.send('service-status', { gpu: gpuOk ? 'ok' : 'missing', services: {} });
+      scheduleNext();
+    });
     req.end();
   }
   tick();

@@ -9,6 +9,7 @@ const LABELS = {
 
 export default function SystemStatus() {
   const [health, setHealth] = useState(null);
+  const [error, setError] = useState(false);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -18,8 +19,8 @@ export default function SystemStatus() {
         const r = await fetch(`${API_BASE}/api/health`);
         if (!r.ok) throw new Error('health ' + r.status);
         const d = await r.json();
-        if (alive) setHealth(d);
-      } catch { if (alive) setHealth(null); }
+        if (alive) { setHealth(d); setError(false); }
+      } catch { if (alive) setError(true); }
     };
     tick();
     const id = setInterval(() => { if (!document.hidden) tick(); }, 10000);
@@ -28,15 +29,18 @@ export default function SystemStatus() {
 
   const ready = health?.ready ?? 0;
   const total = health?.total ?? 0;
-  const allUp = health && ready === total;
+  const allUp = !error && health && ready === total;
+  const cls = error ? 'err' : allUp ? 'ok' : 'warn';
+  const gpu = health?.gpu;
+  const vramOk = gpu && Number.isFinite(gpu.vram_used_mb) && Number.isFinite(gpu.vram_total_mb);
 
   return (
     <div className="sysstatus">
-      <button className={`sysstatus-badge ${allUp ? 'ok' : 'warn'}`} onClick={() => setOpen(o => !o)}>
+      <button className={`sysstatus-badge ${cls}`} onClick={() => setOpen(o => !o)}>
         <span className="sysstatus-dot" />
-        Hệ thống: {health ? `${ready}/${total} sẵn sàng` : 'đang kiểm tra…'}
+        Hệ thống: {error ? 'mất kết nối' : health ? `${ready}/${total} sẵn sàng` : 'đang kiểm tra…'}
       </button>
-      {open && health && (
+      {open && health?.services && (
         <div className="sysstatus-panel">
           {Object.entries(health.services).map(([k, v]) => (
             <div key={k} className="sysstatus-row">
@@ -44,10 +48,9 @@ export default function SystemStatus() {
               {LABELS[k] || k}: {v === 'up' ? 'sẵn sàng' : 'chưa lên'}
             </div>
           ))}
-          {health.gpu && (
+          {gpu && (
             <div className="sysstatus-gpu">
-              {health.gpu.name} — VRAM {Math.round(health.gpu.vram_used_mb / 1024)}/
-              {Math.round(health.gpu.vram_total_mb / 1024)} GB
+              {gpu.name}{vramOk && ` — VRAM ${Math.round(gpu.vram_used_mb / 1024)}/${Math.round(gpu.vram_total_mb / 1024)} GB`}
             </div>
           )}
         </div>

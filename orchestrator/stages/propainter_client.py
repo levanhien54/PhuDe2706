@@ -30,6 +30,7 @@ async def run_propainter_inference(
         "--output", temp_out_dir
     ]
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -38,7 +39,7 @@ async def run_propainter_inference(
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await proc.communicate()
-        
+
         if proc.returncode != 0:
             log.error("propainter_failed", error=stderr.decode('utf-8', errors='replace'))
             return False
@@ -54,6 +55,13 @@ async def run_propainter_inference(
             log.error("propainter_no_output", temp_dir=temp_out_dir)
             return False
 
+    except asyncio.CancelledError:
+        # Job cancelled mid-inference: kill the ProPainter child (holds ~8GB VRAM) so it does
+        # not orphan and OOM the next job, then propagate the cancel.
+        if proc is not None:
+            proc.kill()
+            await proc.wait()
+        raise
     except Exception as e:
         log.error("propainter_exception", error=str(e))
         return False

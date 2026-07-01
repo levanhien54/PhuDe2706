@@ -264,7 +264,15 @@ async def list_videos():
 def _cleanup_temp(base_name: str, data_dir: str):
     """Delete a finished/failed job's temp dir to bound disk use (the per-stage resume markers
     only matter while a job is mid-flight; the hourly cleanup_loop is the backstop)."""
-    temp_dir = os.path.join(data_dir, "temp", base_name)
+    temp_root = os.path.abspath(os.path.join(data_dir, "temp"))
+    temp_dir = os.path.abspath(os.path.join(temp_root, base_name))
+    # Defense in depth: base_name must resolve to a single component directly under temp/.
+    # This blocks path traversal (a base_name containing '..' or, on Windows, backslash
+    # separators that os.path.join honours) from letting rmtree escape data/temp, and also
+    # guards the empty-base_name case that would otherwise resolve to temp_root itself.
+    if os.path.dirname(temp_dir) != temp_root:
+        log.warning("cleanup_temp_skipped_unsafe", base_name=base_name, resolved=temp_dir)
+        return
     if os.path.isdir(temp_dir):
         shutil.rmtree(temp_dir, ignore_errors=True)
         log.info("cleanup_temp", dir=temp_dir)
@@ -359,6 +367,21 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
         _cleanup_temp(base_name, settings.data_dir)
 
 
+def _safe_video_name(filename: str) -> str:
+    """Validate a client-supplied video filename (URL path segment) and return a safe basename.
+
+    A URL segment may contain '..' or, on Windows, backslash separators that os.path.join would
+    honour, so any endpoint that turns {filename} into a filesystem path must never trust it raw.
+    Reject anything that is not a bare filename with an allowed extension."""
+    safe = os.path.basename(filename)
+    if not safe or safe != filename or safe in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    ext = os.path.splitext(safe)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{ext}'.")
+    return safe
+
+
 @app.post("/api/dub/{filename}")
 async def start_dubbing(
     filename: str,
@@ -370,6 +393,9 @@ async def start_dubbing(
     voice_mode: str = "multi",
     voice_preset: str = "",
 ):
+    filename = _safe_video_name(filename)
+    if not os.path.isfile(os.path.join(input_dir, filename)):
+        raise HTTPException(status_code=404, detail="Video not found.")
     job_id = str(uuid.uuid4())[:8]
     save_job(
         job_id, filename, target_lang, settings.vram_profile,

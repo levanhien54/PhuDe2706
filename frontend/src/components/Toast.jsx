@@ -1,13 +1,16 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react';
 
 const Toast = ({ message, type, onClose }) => {
+  // Keep the latest onClose in a ref so the timer effect doesn't depend on its (changing)
+  // identity. Depending on [onClose] restarted the 4s timer on every parent re-render (the
+  // status poller fires every ~2s), so the toast never auto-dismissed during an active job.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
-    const timer = setTimeout(() => {
-      onClose();
-    }, 4000);
+    const timer = setTimeout(() => onCloseRef.current(), 4000);
     return () => clearTimeout(timer);
-  }, [onClose]);
+  }, [message, type]);
 
   const icons = {
     success: <CheckCircle className="toast-icon success" size={20} />,

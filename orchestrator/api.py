@@ -70,7 +70,7 @@ async def cleanup_loop():
                 os.path.splitext(j["filename"])[0]
                 for j in get_jobs_by_status(_active_statuses)
             }
-            for item in os.listdir(temp_dir):
+            for item in await asyncio.to_thread(os.listdir, temp_dir):
                 try:
                     path = os.path.join(temp_dir, item)
                     if not os.path.isdir(path):
@@ -80,7 +80,8 @@ async def cleanup_loop():
                     # Never wipe dirs whose job is still active (AWAITING_REVIEW can sit >24h)
                     if item in active_base_names:
                         continue
-                    shutil.rmtree(path, ignore_errors=True)
+                    # rmtree of a large frame dir off the event loop so status/cancel stay responsive
+                    await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
                     log.info("cleaned_up_stale_temp", path=path)
                 except Exception:
                     log.exception("cleanup_loop_item_failed", item=item)
@@ -201,7 +202,9 @@ app = FastAPI(title="Video Dubbing API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # No cookie/session auth is used, so credentials must stay off: the wildcard-origin +
+    # allow_credentials=True combo is unsafe (and browsers ignore it anyway).
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -244,22 +247,28 @@ def _is_valid_video_header(head: bytes) -> bool:
 
 @app.get("/api/videos")
 async def list_videos():
-    videos = [f for f in os.listdir(input_dir) if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+    def _scan_input():
+        # Keep all filesystem I/O (listdir + per-file exists) off the event loop thread.
+        vids = [f for f in os.listdir(input_dir) if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+        exists = {
+            v: os.path.exists(os.path.join(output_dir, f"{os.path.splitext(v)[0]}_dubbed.mp4"))
+            for v in vids
+        }
+        return vids, exists
+    videos, output_exists = await asyncio.to_thread(_scan_input)
     jobs_map = get_jobs_by_filenames(videos)  # single query
     result = []
     for v in videos:
-        base_name = os.path.splitext(v)[0]
-        output_file = os.path.join(output_dir, f"{base_name}_dubbed.mp4")
         job_info = jobs_map.get(v)
         status = "PENDING"
         if job_info:
             status = job_info["status"]
-        elif os.path.exists(output_file):
+        elif output_exists.get(v):
             status = "COMPLETED"
         result.append({
             "filename": v,
             "status": status,
-            "has_output": os.path.exists(output_file),
+            "has_output": output_exists.get(v, False),
             "job_id": job_info["job_id"] if job_info else None
         })
     return {"videos": result}
@@ -503,6 +512,7 @@ async def api_list_voices():
 
 @app.get("/api/status/{filename}")
 async def get_status(filename: str):
+    filename = _safe_video_name(filename)  # block path-traversal existence probing
     job_info = get_job_by_filename(filename)
     if job_info:
         return job_info
@@ -521,7 +531,11 @@ async def api_get_segments(job_id: str):
 
 @app.put("/api/jobs/{job_id}/segments")
 async def api_update_segment(job_id: str, data: SegmentUpdate):
-    update_segment_translation(data.id, data.translated_text)
+    # Scope the write to this job so a stale/mismatched segment id can't overwrite another
+    # job's translation (segments.id is a global autoincrement key).
+    updated = update_segment_translation(data.id, data.translated_text, job_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Segment not found for this job.")
     return {"message": "Updated"}
 
 async def run_pipeline_resume_task(job_id: str):

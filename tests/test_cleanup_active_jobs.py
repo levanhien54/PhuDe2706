@@ -35,3 +35,22 @@ def test_active_job_with_uppercase_ext_is_matched_by_basename(temp_db):
 def test_get_jobs_by_status_empty(temp_db):
     assert database.get_jobs_by_status(set()) == []
     assert database.get_jobs_by_status({"PROCESSING"}) == []
+
+
+def test_update_segment_translation_scoped_to_job(temp_db):
+    """A segment write must be scoped to its job so a global id can't overwrite another job
+    (audit LOW: update_segment_translation IDOR/cross-job edit)."""
+    from types import SimpleNamespace
+    seg = SimpleNamespace(start=0.0, end=1.0, text="hi", translated="xin chào", speaker=None)
+    database.save_segments("jobA", [seg])
+    database.save_segments("jobB", [seg])
+
+    id_a = database.get_segments("jobA")[0]["id"]
+
+    # Wrong job -> no rows updated, jobA untouched
+    assert database.update_segment_translation(id_a, "HACKED", "jobB") == 0
+    assert database.get_segments("jobA")[0]["translated_text"] == "xin chào"
+
+    # Correct job -> updated
+    assert database.update_segment_translation(id_a, "đã sửa", "jobA") == 1
+    assert database.get_segments("jobA")[0]["translated_text"] == "đã sửa"

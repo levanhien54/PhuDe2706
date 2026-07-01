@@ -123,7 +123,10 @@ if ($env:LLM_BACKEND -eq "ollama") {
     $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
     $ollamaExe = if ($ollamaCmd) { $ollamaCmd.Source } else { $null }
     if (-not $ollamaExe) { $ollamaExe = "C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\ollama.exe" }
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c set OLLAMA_MODELS=$env:OLLAMA_MODELS && `"$ollamaExe`" serve" -WindowStyle Minimized
+    # $env:OLLAMA_MODELS is already set above and Start-Process inherits this process's
+    # environment, so launch ollama directly. Routing through `cmd /c set VAR=... && ...`
+    # broke (or injected) when the install path contained cmd metacharacters (& ^ ( ) %).
+    Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Minimized
 }
 
 # 6. Start Frontend

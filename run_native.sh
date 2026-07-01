@@ -16,9 +16,11 @@ fi
 
 echo -e "\033[1;36mKhởi động các dịch vụ trong background...\033[0m"
 
-# Nạp file .env (nếu có)
+# Nạp file .env (nếu có) — auto-export mỗi biến, giữ nguyên value có dấu cách/ký tự đặc biệt
 if [ -f "$PROJECT_ROOT/.env" ]; then
-    export $(grep -v '^#' "$PROJECT_ROOT/.env" | xargs)
+    set -a
+    . "$PROJECT_ROOT/.env"
+    set +a
 fi
 
 # Ghi đè các endpoint mặc định cho Local

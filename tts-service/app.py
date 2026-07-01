@@ -21,7 +21,7 @@ app = FastAPI(title="TTS Adapter API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # no cookie auth; wildcard-origin + credentials is unsafe
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -229,9 +229,9 @@ async def tts(req: TTSRequest):
             req.text, req.text_language, req.refer_wav_path,
             req.output_path, req.prompt_text, req.prompt_language,
         )
-    except Exception as e:
+    except Exception:
         log.error("tts failed:\n%s", traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"tts failed: {e}")
+        raise HTTPException(status_code=500, detail="tts failed")
     if not os.path.exists(req.output_path):
         raise HTTPException(status_code=500, detail="tts produced no output file")
     return {"output_path": req.output_path}

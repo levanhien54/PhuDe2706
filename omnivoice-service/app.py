@@ -21,7 +21,7 @@ app = FastAPI(title="OmniVoice TTS Adapter")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # no cookie auth; wildcard-origin + credentials is unsafe
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -245,9 +245,9 @@ async def synthesize(req: TTSRequest):
             _synthesize_omnivoice,
             req.text, req.language, req.reference_audio, req.output_path, req.target_duration, req.ref_text
         )
-    except Exception as e:
+    except Exception:
         log.error(f"tts failed:\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="tts failed")
         
     if not os.path.exists(req.output_path):
         raise HTTPException(status_code=500, detail="tts produced no output")

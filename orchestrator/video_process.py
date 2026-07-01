@@ -1216,8 +1216,16 @@ def remove_watermark_from_video(
 
     # Fix 2: Raise if any thread failed
     if not error_q.empty():
-        cap.release()
-        out.release()
+        # Release without letting a cleanup error (e.g. FFmpegWriter.release() raising on a
+        # non-zero ffmpeg exit) mask the real thread error we want to surface.
+        try:
+            cap.release()
+        except Exception:
+            pass
+        try:
+            out.release()
+        except Exception:
+            pass
         raise RuntimeError(f"Video processing thread error: {error_q.get()}")
 
     cap.release()

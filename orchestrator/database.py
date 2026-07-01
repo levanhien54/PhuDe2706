@@ -212,9 +212,17 @@ def get_segments(job_id: str) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def update_segment_translation(segment_id: int, translated_text: str):
+def update_segment_translation(segment_id: int, translated_text: str, job_id: str | None = None) -> int:
+    """Update a segment's translation. When job_id is given the write is scoped to that job so a
+    global segment id can't overwrite another job's row. Returns the number of rows updated."""
     with _connect() as conn:
-        conn.execute('UPDATE segments SET translated_text=? WHERE id=?', (translated_text, segment_id))
+        if job_id is None:
+            cur = conn.execute('UPDATE segments SET translated_text=? WHERE id=?',
+                               (translated_text, segment_id))
+        else:
+            cur = conn.execute('UPDATE segments SET translated_text=? WHERE id=? AND job_id=?',
+                               (translated_text, segment_id, job_id))
+        return cur.rowcount
 
 
 # --- Auto-process watch-folder config (persisted in app_settings) ---

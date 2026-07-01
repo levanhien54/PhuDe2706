@@ -83,7 +83,7 @@ app = FastAPI(title="WhisperX API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # no cookie auth; wildcard-origin + credentials is unsafe
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -282,9 +282,9 @@ async def transcribe(file: UploadFile = File(...)):
         log.info("transcribe request complete: %d segments in %.1fs total",
                  len(segments), time.monotonic() - req_start)
         return {"segments": segments}
-    except Exception as e:
+    except Exception:
         log.error("transcription failed:\n%s", traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"transcription failed: {e}")
+        raise HTTPException(status_code=500, detail="transcription failed")
     finally:
         if os.path.exists(tmp.name):
             os.remove(tmp.name)

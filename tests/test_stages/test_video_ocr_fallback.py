@@ -77,7 +77,7 @@ def test_no_fallback_when_propainter_succeeds(tmp_path):
     settings, vram, job, cleaned = _setup(tmp_path)
     calls = []
 
-    async def propainter_ok(input_v, mask_v, out_v, prop_dir):
+    async def propainter_ok(input_v, mask_v, out_v, prop_dir, **kwargs):
         open(out_v, "w").close()
         return True
 

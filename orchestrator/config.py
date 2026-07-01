@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     enable_ocr: bool = Field(False, validation_alias="ENABLE_OCR")
     ocr_mode: str = Field("blur", validation_alias="OCR_MODE")
     enable_propainter: bool = Field(False, validation_alias="ENABLE_PROPAINTER")
+    # ProPainter HD/OOM mitigation (verify flag names against the installed ProPainter version):
+    # fp16 halves VRAM; resize_ratio<1.0 downscales before inpaint; smaller subvideo_length
+    # processes fewer frames per pass (temporal tiling) so HD fits on 8-16GB.
+    propainter_fp16: bool = Field(True, validation_alias="PROPAINTER_FP16")
+    propainter_resize_ratio: float = Field(1.0, validation_alias="PROPAINTER_RESIZE_RATIO")
+    propainter_subvideo_length: int = Field(80, validation_alias="PROPAINTER_SUBVIDEO_LENGTH")
     enable_cpu_offload: bool = Field(False, validation_alias="ENABLE_CPU_OFFLOAD")
     enable_kvcached: bool = Field(False, validation_alias="ENABLE_KVCACHED")
 

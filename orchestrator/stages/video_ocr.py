@@ -82,7 +82,10 @@ async def run_video_ocr(
             try:
                 async with vram.slot("propainter", 8.0):
                     success = await run_propainter_inference(
-                        input_video, mask_video, output_video, propainter_dir
+                        input_video, mask_video, output_video, propainter_dir,
+                        fp16=settings.propainter_fp16,
+                        resize_ratio=settings.propainter_resize_ratio,
+                        subvideo_length=settings.propainter_subvideo_length,
                     )
             except asyncio.CancelledError:
                 raise

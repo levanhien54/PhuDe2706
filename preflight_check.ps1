@@ -18,8 +18,10 @@ if (-not $smi) {
     if ($line) {
         $p = $line.Split(","); $name = $p[0].Trim(); $drv = $p[1].Trim(); $vram = [int]($p[2].Trim())
         Add-Result "GPU NVIDIA" "PASS" "$name (driver $drv)"
-        if ([version]($drv) -lt [version]"452.39") { Add-Result "Driver GPU" "WARN" "Driver $drv có thể quá cũ cho CUDA 11.8 — nên cập nhật ≥ 452.39." }
-        else { Add-Result "Driver GPU" "PASS" "driver $drv" }
+        try {
+            if ([version]($drv) -lt [version]"452.39") { Add-Result "Driver GPU" "WARN" "Driver $drv có thể quá cũ cho CUDA 11.8 — nên cập nhật ≥ 452.39." }
+            else { Add-Result "Driver GPU" "PASS" "driver $drv" }
+        } catch { Add-Result "Driver GPU" "WARN" "Không đọc được phiên bản driver: $drv" }
         if ($vram -lt 16000) { Add-Result "VRAM" "FAIL" "$([math]::Round($vram/1024,1)) GB < 16 GB tối thiểu." }
         elseif ($vram -lt 24000) { Add-Result "VRAM" "PASS" "$([math]::Round($vram/1024,1)) GB — dùng VRAM_PROFILE=16gb." }
         else { Add-Result "VRAM" "PASS" "$([math]::Round($vram/1024,1)) GB — dùng VRAM_PROFILE=24gb." }

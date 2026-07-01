@@ -64,3 +64,4 @@ python-runtime/
 .claude/
 _ocr_verify/
 ab_compare/
+preflight_report.txt

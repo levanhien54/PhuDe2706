@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { API_BASE } from '../api';
 
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const LABELS = {
   orchestrator: 'Điều phối', whisperx: 'Nhận giọng (WhisperX)',
   omnivoice: 'Giọng đọc (OmniVoice)', tts: 'Giọng đọc (TTS)',
@@ -15,7 +15,8 @@ export default function SystemStatus() {
     let alive = true;
     const tick = async () => {
       try {
-        const r = await fetch(`${API}/api/health`);
+        const r = await fetch(`${API_BASE}/api/health`);
+        if (!r.ok) throw new Error('health ' + r.status);
         const d = await r.json();
         if (alive) setHealth(d);
       } catch { if (alive) setHealth(null); }

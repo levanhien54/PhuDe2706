@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     voice_preset: str = Field("", validation_alias="VOICE_PRESET")
     llm_backend: str = Field("ollama", validation_alias="LLM_BACKEND")
     llm_model: str = Field("qwen2.5:14b", validation_alias="LLM_MODEL")
+    # ASR model served by whisperx-service. large-v3-turbo (~3GB, MIT) is the v2.0 default:
+    # ~50% faster than large-v3 at near-parity WER. Set WHISPER_MODEL=large-v3 to revert.
+    whisper_model: str = Field("large-v3-turbo", validation_alias="WHISPER_MODEL")
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")
     enable_lipsync: bool = Field(False, validation_alias="ENABLE_LIPSYNC")
     enable_ocr: bool = Field(False, validation_alias="ENABLE_OCR")

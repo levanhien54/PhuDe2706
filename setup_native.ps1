@@ -277,6 +277,13 @@ if ($env:SEPARATION_ENGINE -eq "bs_roformer") {
     Write-OK "Đã cài audio-separator (CHƯA TEST). Model tải lần đầu chạy hoặc pre-download thủ công."
 }
 
+# --- WSOLA time-stretch (tuỳ chọn) ---
+if ($env:TIMESTRETCH_ALGO -eq "wsola") {
+    Write-Host "Đang cài audiotsm (WSOLA time-stretch)..."
+    & $PipExe install @PipArgs audiotsm
+    Write-OK "Đã cài audiotsm."
+}
+
 Write-Host "Kích hoạt tải trước mô hình htdemucs_ft..."
 & $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft')"
 Write-OK "Đã tải htdemucs_ft."

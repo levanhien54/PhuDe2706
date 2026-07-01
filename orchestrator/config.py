@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # ASR model served by whisperx-service. large-v3-turbo (~3GB, MIT) is the v2.0 default:
     # ~50% faster than large-v3 at near-parity WER. Set WHISPER_MODEL=large-v3 to revert.
     whisper_model: str = Field("large-v3-turbo", validation_alias="WHISPER_MODEL")
+    # Audio source separation: "demucs" (htdemucs_ft, default) or "bs_roformer" (SOTA vocal).
+    separation_engine: str = Field("demucs", validation_alias="SEPARATION_ENGINE")
+    # BS-Roformer model filename for the audio-separator package (only when engine=bs_roformer).
+    separation_model: str = Field(
+        "model_bs_roformer_ep_317_sdr_12.9755.ckpt", validation_alias="SEPARATION_MODEL"
+    )
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")
     enable_lipsync: bool = Field(False, validation_alias="ENABLE_LIPSYNC")
     # Lip-sync engine: "latentsync" (quality, default) or "musetalk" (faster, single-pass).

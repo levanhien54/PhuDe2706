@@ -267,6 +267,16 @@ snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir=target_dir)
     Write-OK "Đã kiểm tra weights MuseTalk (CHƯA TEST)."
 }
 
+# --- BS-Roformer (tách nhạc SOTA, TUỲ CHỌN) ---
+# ⚠️ CHƯA TEST TRÊN GPU — verify trước khi dùng. Chỉ cài khi SEPARATION_ENGINE=bs_roformer. Gói
+# audio-separator tự tải model .ckpt lần đầu chạy (cần mạng lần đó) — hoặc pre-download vào cache
+# của nó để chạy offline hoàn toàn.
+if ($env:SEPARATION_ENGINE -eq "bs_roformer") {
+    Write-Host "Đang cài audio-separator (BS-Roformer)..."
+    & $PipExe install @PipArgs "audio-separator[gpu]"
+    Write-OK "Đã cài audio-separator (CHƯA TEST). Model tải lần đầu chạy hoặc pre-download thủ công."
+}
+
 Write-Host "Kích hoạt tải trước mô hình htdemucs_ft..."
 & $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft')"
 Write-OK "Đã tải htdemucs_ft."

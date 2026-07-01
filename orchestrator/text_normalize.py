@@ -223,6 +223,115 @@ def normalize_english(text: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
+# ── Korean number reader (Sino vs native, by counter) ───────────────────────────────────────
+# Korean picks its number system by the FOLLOWING counter: minutes/months/won/year/day and most
+# measures use Sino-Korean (일 이 삼 …); hours/items/people/age use native Korean (하나 둘 셋 …,
+# attributive 한/두/세/네/스무). Picking the wrong system is the #1 tell of synthetic Korean TTS.
+# Native tops out at 99; above that we fall back to Sino even with a native counter. We stay
+# CONSERVATIVE — native only for a short list of unambiguous high-value counters; everything else
+# (money, dates, phone, math, measures) reads Sino, which is the safe majority case.
+_KO_SINO = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"]
+_KO_BIG_UNITS = ["", "만", "억", "조", "경"]
+_KO_NATIVE_ONES = ["", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉"]
+_KO_NATIVE_TENS = ["", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔"]
+_KO_NATIVE_ATTR = {1: "한", 2: "두", 3: "세", 4: "네"}   # forms used directly before a counter
+_KO_NATIVE_COUNTERS = ["시간", "시", "개", "명", "살"]     # longest first (시간 before 시)
+_KO_SINO_PROTECT = ["개월"]                              # Sino counter containing a native substring
+
+
+def _ko_read_sino_4(n: int) -> str:
+    """Read 1..9999 in Sino-Korean (일 omitted before 천/백/십)."""
+    out = ""
+    for place, unit in ((1000, "천"), (100, "백"), (10, "십")):
+        d = (n // place) % 10
+        if d:
+            out += ("" if d == 1 else _KO_SINO[d]) + unit
+    if n % 10:
+        out += _KO_SINO[n % 10]
+    return out
+
+
+def _ko_read_sino(n: int) -> str:
+    if n == 0:
+        return "영"
+    groups = []
+    while n > 0:
+        groups.append(n % 10000)
+        n //= 10000
+    out = ""
+    for gi in range(len(groups) - 1, -1, -1):
+        if groups[gi]:
+            out += _ko_read_sino_4(groups[gi]) + _KO_BIG_UNITS[gi]
+    for u in ("만", "억", "조", "경"):            # 10000 -> 만, not 일만 (drop leading 일)
+        if out.startswith("일" + u):
+            out = out[1:]
+            break
+    return out
+
+
+def _ko_read_native(n: int, attributive: bool):
+    """Read 1..99 in native Korean; returns None outside that range (caller falls back to Sino)."""
+    if n < 1 or n > 99:
+        return None
+    tens, ones = n // 10, n % 10
+    if attributive:
+        if ones == 0:
+            return "스무" if n == 20 else _KO_NATIVE_TENS[tens]
+        head = _KO_NATIVE_TENS[tens]
+        return head + (_KO_NATIVE_ATTR[ones] if ones in _KO_NATIVE_ATTR else _KO_NATIVE_ONES[ones])
+    head = _KO_NATIVE_TENS[tens]
+    return head + _KO_NATIVE_ONES[ones] if ones else head
+
+
+def _ko_digits(s: str) -> str:
+    """Spell a digit run one digit at a time (0 -> 공, phone/code style)."""
+    return " ".join("공" if c == "0" else _KO_SINO[int(c)] for c in s)
+
+
+def normalize_korean(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r"\s*&\s*", " 그리고 ", text)
+    text = re.sub(r"(\d)\s*%", r"\1퍼센트", text)
+    text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 달러", text)
+    text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 달러", text)
+    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 유로", text)
+
+    # Phone numbers / codes → digit by digit (0 -> 공). Only hyphenated runs (010-1234-5678) or
+    # leading-zero runs are treated as codes; a bare number like 100000000 stays a Sino cardinal.
+    def _ko_phone(m):
+        digs = re.sub(r"\D", "", m.group())
+        if len(digs) >= 9 or (digs.startswith("0") and len(digs) >= 8):
+            return " " + _ko_digits(digs) + " "
+        return m.group()                                   # short hyphenated (e.g. a range/score)
+    text = re.sub(r"(?<!\d)\+?\d[\d]*(?:-\d[\d]*)+(?!\d)", _ko_phone, text)   # hyphenated
+    text = re.sub(r"(?<!\d)0\d{7,}(?!\d)",
+                  lambda m: " " + _ko_digits(m.group()) + " ", text)          # bare leading-zero
+
+    # Decimals: 3.14 -> 삼 점 일사.
+    text = re.sub(r"(?<!\d)(\d+)\.(\d+)",
+                  lambda m: _ko_read_sino(int(m.group(1))) + " 점 " + _ko_digits(m.group(2)), text)
+
+    # Sino-protected counters (개월) BEFORE the native pass so 3개월 -> 삼 개월, not 세 개월.
+    for c in _KO_SINO_PROTECT:
+        text = re.sub(rf"(\d+)\s*{c}",
+                      lambda m, c=c: _ko_read_sino(int(m.group(1))) + " " + c, text)
+
+    # Native-counter numbers (attributive form); >99 falls back to Sino.
+    def _native(counter):
+        def repl(m):
+            n = int(m.group(1))
+            nat = _ko_read_native(n, attributive=True)
+            return (nat if nat is not None else _ko_read_sino(n)) + " " + counter
+        return repl
+    for c in _KO_NATIVE_COUNTERS:
+        text = re.sub(rf"(\d+)\s*{c}", _native(c), text)
+
+    # Everything else → Sino cardinal.
+    text = re.sub(r"\d+", lambda m: _ko_read_sino(int(m.group())), text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 # ── VietNormalizer (mature lib; optional) ───────────────────────────────────────────────────
 try:
     from vietnormalizer import VietnameseNormalizer
@@ -252,5 +361,9 @@ def normalize_for_tts(text: str, lang_code: str) -> str:
         return _vi_post(normalize_vietnamese(text))
     if lang_code == "en":
         return normalize_english(_ranges_to_words(text, "to"))
-    # ja / ko / zh / fr / ... : the model reads the script; just the shared pre-clean is applied.
+    if lang_code == "ko":
+        # Korean uses its own script — do NOT strip Hangul; expand numbers by Sino/native counter.
+        return normalize_korean(_ranges_to_words(text, "에서"))
+    # ja / zh / fr / de / ... : the model reads the script; just the shared pre-clean is applied.
+    # (Number expansion for ja/de is a follow-up — OmniVoice won't verbalize bare digits.)
     return text

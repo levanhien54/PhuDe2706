@@ -242,6 +242,31 @@ if not os.path.exists(os.path.join(target_dir, 'latentsync_unet.pt')):
 & $PythonExe -c $hf_script
 Write-OK "Đã kiểm tra weights LatentSync."
 
+# --- MuseTalk (engine lip-sync nhanh, TUỲ CHỌN) ---
+# ⚠️ CHƯA TEST TRÊN GPU — verify trước khi dùng. Chỉ tải khi LIPSYNC_ENGINE=musetalk để không
+# phình setup mặc định. Repo + danh sách weights (whisper/dwpose/sd-vae/musetalk) tuỳ version —
+# chỉnh repo_id/đường dẫn nếu tải lỗi.
+if ($env:LIPSYNC_ENGINE -eq "musetalk") {
+    if (-not (Test-Path "$ProjectRoot\models\musetalk\scripts\inference.py")) {
+        Write-Host "Đang tải mã nguồn MuseTalk (Lip-Sync nhanh)..."
+        git clone https://github.com/TMElyralab/MuseTalk.git "$ProjectRoot\models\musetalk"
+        & $PipExe install @PipArgs -r "$ProjectRoot\models\musetalk\requirements.txt"
+    } else {
+        Write-OK "Phát hiện mã nguồn MuseTalk đã có sẵn, bỏ qua git clone."
+    }
+    Write-Host "Kích hoạt tải trọng số MuseTalk..."
+    $mt_script = @"
+import os
+from huggingface_hub import snapshot_download
+target_dir = os.path.join(r'$ProjectRoot', 'models', 'musetalk', 'models')
+os.makedirs(target_dir, exist_ok=True)
+print('Downloading MuseTalk weights from huggingface...')  # verify repo_id + layout theo version
+snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir=target_dir)
+"@
+    & $PythonExe -c $mt_script
+    Write-OK "Đã kiểm tra weights MuseTalk (CHƯA TEST)."
+}
+
 Write-Host "Kích hoạt tải trước mô hình htdemucs_ft..."
 & $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft')"
 Write-OK "Đã tải htdemucs_ft."

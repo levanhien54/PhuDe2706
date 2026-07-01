@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     whisper_model: str = Field("large-v3-turbo", validation_alias="WHISPER_MODEL")
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")
     enable_lipsync: bool = Field(False, validation_alias="ENABLE_LIPSYNC")
+    # Lip-sync engine: "latentsync" (quality, default) or "musetalk" (faster, single-pass).
+    lipsync_engine: str = Field("latentsync", validation_alias="LIPSYNC_ENGINE")
     enable_ocr: bool = Field(False, validation_alias="ENABLE_OCR")
     ocr_mode: str = Field("blur", validation_alias="OCR_MODE")
     enable_propainter: bool = Field(False, validation_alias="ENABLE_PROPAINTER")

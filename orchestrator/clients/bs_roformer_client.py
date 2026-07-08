@@ -11,6 +11,7 @@ import glob
 import shutil
 import asyncio
 
+from orchestrator.clients.base import gpu_subprocess_timeout
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
@@ -42,8 +43,15 @@ class BSRoformerClient:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
         )
+        timeout = gpu_subprocess_timeout()
         try:
-            stdout, stderr = await proc.communicate()
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # Wedged child: kill it so it can't hang the worker forever.
+            log.error("bsroformer_timeout", timeout=timeout)
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError(f"BS-Roformer separation vượt quá thời gian cho phép ({timeout}s) — đã hủy tiến trình con.")
         except asyncio.CancelledError:
             # Job cancelled mid-separation: kill the child (GPU) so it doesn't orphan.
             proc.kill()

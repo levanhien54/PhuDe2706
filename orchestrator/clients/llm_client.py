@@ -75,9 +75,20 @@ def _word_budget(duration: float) -> int:
     return max(2, round((duration or 0) * _WORDS_PER_SEC))
 
 
+_LLM_BACKENDS = ("vllm", "ollama")
+
+
 class LLMClient(BaseClient):
     def __init__(self, settings: Settings):
-        base_url = settings.vllm_host if settings.llm_backend == "vllm" else settings.ollama_host
+        # Normalize case and reject unknown backends loudly — a typo (e.g. "vLLM") must not
+        # silently route to Ollama.
+        backend = (settings.llm_backend or "").strip().lower()
+        if backend not in _LLM_BACKENDS:
+            raise ValueError(
+                f"Unknown LLM_BACKEND {settings.llm_backend!r} (expected one of {_LLM_BACKENDS})"
+            )
+        self.backend = backend
+        base_url = settings.vllm_host if backend == "vllm" else settings.ollama_host
         super().__init__(base_url, settings)
         self.settings = settings
 
@@ -96,7 +107,7 @@ class LLMClient(BaseClient):
             {"role": "user", "content": user_prompt},
         ]
         async with _get_sem():
-            if self.settings.llm_backend == "vllm":
+            if self.backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,
                     "messages": messages,
@@ -158,7 +169,7 @@ class LLMClient(BaseClient):
         ]
 
         try:
-            if self.settings.llm_backend == "vllm":
+            if self.backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,
                     "messages": messages,
@@ -189,13 +200,30 @@ class LLMClient(BaseClient):
 
             # Coerce id to int — the model may return ids as strings, which would make
             # the int-based `missing` lookup below treat every item as missing.
+            translated_items = [
+                item for item in parsed
+                if isinstance(item, dict) and item.get("translated")
+            ]
             parsed_dict = {}
-            for item in parsed:
-                if isinstance(item, dict) and "id" in item and item.get("translated"):
+            for item in translated_items:
+                if "id" in item:
                     try:
                         parsed_dict[int(item["id"])] = item["translated"]
                     except (ValueError, TypeError):
                         continue
+
+            # Don't trust the model's ids blindly. If it renumbered the batch (e.g. returned
+            # 1-based ids, or reordered them) the id set won't match the expected {0..N-1}. When
+            # we still got exactly N translated items, positional order is far more reliable than
+            # the model's ids — otherwise a 1-based reply would silently shift every line by one.
+            expected_ids = set(range(len(chunk)))
+            if set(parsed_dict.keys()) != expected_ids and len(translated_items) == len(chunk):
+                log.warning(
+                    "batch_translation_id_mismatch",
+                    returned=sorted(parsed_dict.keys()), expected_n=len(chunk),
+                )
+                parsed_dict = {i: translated_items[i]["translated"] for i in range(len(chunk))}
+
             missing = [i for i in range(len(chunk)) if i not in parsed_dict]
             if missing:
                 # The batch JSON dropped some items (common with long segments). Don't silently

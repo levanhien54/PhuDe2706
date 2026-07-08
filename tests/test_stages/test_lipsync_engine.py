@@ -44,3 +44,15 @@ def test_selects_latentsync_by_default(tmp_path):
     assert result.success
     ls.assert_awaited_once()
     mt.assert_not_awaited()
+
+
+def test_unknown_engine_fails_loudly(tmp_path):
+    # An unrecognized LIPSYNC_ENGINE must fail (finding 1.10), not silently run LatentSync.
+    settings, vram, job = _ctx("bogus_engine", tmp_path)
+    with patch("orchestrator.stages.lip_sync.run_musetalk_inference", new_callable=AsyncMock) as mt, \
+         patch("orchestrator.stages.lip_sync.run_latentsync_inference", new_callable=AsyncMock) as ls:
+        result = asyncio.run(lip_sync.run_lip_sync(job, settings, vram))
+    assert result.success is False
+    assert "LIPSYNC_ENGINE" in (result.error or "")
+    mt.assert_not_awaited()
+    ls.assert_not_awaited()

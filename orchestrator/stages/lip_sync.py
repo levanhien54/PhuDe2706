@@ -29,8 +29,18 @@ async def run_lip_sync(
             duration_seconds=0,
         )
 
-    engine = (settings.lipsync_engine or "latentsync").lower()
-    inference = run_musetalk_inference if engine == "musetalk" else run_latentsync_inference
+    engine = (settings.lipsync_engine or "latentsync").strip().lower()
+    if engine == "musetalk":
+        inference = run_musetalk_inference
+    elif engine == "latentsync":
+        inference = run_latentsync_inference
+    else:
+        # Unknown value: fail loudly instead of silently defaulting to LatentSync.
+        log.error("lipsync_unknown_engine", engine=settings.lipsync_engine)
+        return StageResult(
+            stage="lip_sync", success=False,
+            error=f"Unknown LIPSYNC_ENGINE {settings.lipsync_engine!r} (expected 'latentsync' or 'musetalk')",
+        )
 
     try:
         async with vram.slot("lipsync", _LIPSYNC_VRAM_GB):

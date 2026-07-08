@@ -1,6 +1,6 @@
 import sys
 import shutil
-from orchestrator.clients.base import BaseClient, ServiceUnavailableError
+from orchestrator.clients.base import BaseClient, ServiceUnavailableError, gpu_subprocess_timeout
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
@@ -38,8 +38,17 @@ class DemucsClient(BaseClient):
                 stderr=asyncio.subprocess.PIPE,
                 env=env
             )
+            timeout = gpu_subprocess_timeout()
             try:
-                stdout, stderr = await process.communicate()
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                # Wedged child: kill it so it can't hang the worker forever.
+                log.error("demucs_local_timeout", timeout=timeout)
+                process.kill()
+                await process.wait()
+                raise ServiceUnavailableError(
+                    f"Local Demucs timed out after {timeout}s — killed the child process."
+                )
             except asyncio.CancelledError:
                 # Job cancelled mid-separation: kill the demucs child (GPU) so it doesn't orphan.
                 process.kill()

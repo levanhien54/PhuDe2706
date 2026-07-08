@@ -26,6 +26,37 @@ async def test_translate_batch_ollama(settings_ollama):
 
 
 @pytest.mark.asyncio
+async def test_translate_batch_reindexes_when_model_returns_1based_ids(settings_ollama):
+    # The model renumbered the batch 1-based. Trusting its ids would map id=1's text to segment
+    # index 1, shifting every line by one. The validation must fall back to positional order so
+    # each translation lands on its own segment (finding C6).
+    segments = [
+        SrtSegment(start=0.0, end=2.0, text="Alpha"),
+        SrtSegment(start=2.0, end=4.0, text="Bravo"),
+    ]
+    body = {"message": {"content": '[{"id": 1, "translated": "Một"}, {"id": 2, "translated": "Hai"}]'}}
+    with respx.mock:
+        respx.post("http://ollama-test:11434/api/chat").mock(return_value=httpx.Response(200, json=body))
+        client = LLMClient(settings_ollama)
+        result = await client.translate_batch(segments, target_lang="vi")
+    assert result[0].translated == "Một"
+    assert result[1].translated == "Hai"
+
+
+def test_llm_backend_router_is_case_insensitive():
+    settings = Settings(llm_backend="Ollama", ollama_host="http://ollama-test:11434",
+                        llm_model="qwen2.5:14b", _env_file=None)
+    client = LLMClient(settings)
+    assert client.backend == "ollama"
+    assert client.base_url == "http://ollama-test:11434"
+
+
+def test_llm_backend_router_rejects_unknown():
+    with pytest.raises(ValueError):
+        LLMClient(Settings(llm_backend="bogus_backend", _env_file=None))
+
+
+@pytest.mark.asyncio
 async def test_translate_one_handles_bare_string_array(settings_ollama):
     # A backend without an enforced schema may return a JSON array of bare strings instead
     # of objects. _translate_one must fall back to the source text, not raise AttributeError

@@ -13,9 +13,15 @@ _DEMUCS_VRAM_GB = 3.0
 
 def _make_separator(settings: Settings):
     """Pick the source-separation client. BS-Roformer (SOTA vocal) or Demucs (default)."""
-    if (settings.separation_engine or "demucs").lower() == "bs_roformer":
+    engine = (settings.separation_engine or "demucs").strip().lower()
+    if engine == "bs_roformer":
         return BSRoformerClient(settings)
-    return DemucsClient(settings)
+    if engine == "demucs":
+        return DemucsClient(settings)
+    # Unknown value: fail loudly instead of silently defaulting to Demucs.
+    raise ValueError(
+        f"Unknown SEPARATION_ENGINE {settings.separation_engine!r} (expected 'demucs' or 'bs_roformer')"
+    )
 
 
 async def run_audio_separate(

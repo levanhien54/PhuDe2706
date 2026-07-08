@@ -11,6 +11,7 @@ import glob
 import subprocess
 import asyncio
 
+from orchestrator.clients.base import gpu_subprocess_timeout
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
@@ -46,33 +47,49 @@ async def run_musetalk_inference(video_path: str, audio_path: str, output_path: 
     # --- end MUSETALK-CMD ---
 
     log.info("musetalk_exec", cmd=" ".join(cmd), cwd=musetalk_dir)
-    process = await asyncio.create_subprocess_exec(
-        *cmd, cwd=musetalk_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
     try:
-        stdout, stderr = await process.communicate()
-    except asyncio.CancelledError:
-        # Job cancelled mid-inference: kill the MuseTalk child (~6-8GB VRAM) so it does not
-        # orphan and OOM the next job, then propagate the cancel.
-        process.kill()
-        await process.wait()
-        raise
-
-    if process.returncode != 0:
-        log.error("musetalk_error", stderr=stderr.decode("utf-8", errors="ignore"))
-        raise RuntimeError(f"MuseTalk inference thất bại. Mã lỗi: {process.returncode}")
-
-    # --- MUSETALK-OUTPUT (verify): MuseTalk đặt tên output theo task, không đúng output_path.
-    # Nếu đúng chỗ rồi thì thôi; nếu không, lấy .mp4 mới nhất trong result_dir và đổi tên.
-    if not os.path.exists(output_path):
-        produced = sorted(
-            (p for p in glob.glob(os.path.join(result_dir, "*.mp4")) if p != output_path),
-            key=os.path.getmtime,
+        process = await asyncio.create_subprocess_exec(
+            *cmd, cwd=musetalk_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-        if not produced:
-            raise RuntimeError(f"MuseTalk chạy xong (rc=0) nhưng không thấy file .mp4 trong {result_dir}")
-        os.replace(produced[-1], output_path)
-    # --- end MUSETALK-OUTPUT ---
+        timeout = gpu_subprocess_timeout()
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # Wedged child: kill it so it can't hang the worker forever (~6-8GB VRAM).
+            log.error("musetalk_timeout", timeout=timeout)
+            process.kill()
+            await process.wait()
+            raise RuntimeError(f"MuseTalk inference vượt quá thời gian cho phép ({timeout}s) — đã hủy tiến trình con.")
+        except asyncio.CancelledError:
+            # Job cancelled mid-inference: kill the MuseTalk child (~6-8GB VRAM) so it does not
+            # orphan and OOM the next job, then propagate the cancel.
+            process.kill()
+            await process.wait()
+            raise
+
+        if process.returncode != 0:
+            log.error("musetalk_error", stderr=stderr.decode("utf-8", errors="ignore"))
+            raise RuntimeError(f"MuseTalk inference thất bại. Mã lỗi: {process.returncode}")
+
+        # --- MUSETALK-OUTPUT (verify): MuseTalk đặt tên output theo task, không đúng output_path.
+        # Nếu đúng chỗ rồi thì thôi; nếu không, lấy .mp4 mới nhất trong result_dir và đổi tên.
+        if not os.path.exists(output_path):
+            produced = sorted(
+                (p for p in glob.glob(os.path.join(result_dir, "*.mp4")) if p != output_path),
+                key=os.path.getmtime,
+            )
+            if not produced:
+                raise RuntimeError(f"MuseTalk chạy xong (rc=0) nhưng không thấy file .mp4 trong {result_dir}")
+            os.replace(produced[-1], output_path)
+        # --- end MUSETALK-OUTPUT ---
+    finally:
+        # Remove the temp inference YAML on every exit path (success/error/cancel/timeout) so it
+        # doesn't accumulate a stray .yaml next to each output.
+        try:
+            if os.path.exists(inference_yaml):
+                os.remove(inference_yaml)
+        except OSError:
+            pass
 
     log.info("musetalk_inference_done", output=output_path)
     return output_path

@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import asyncio
+from orchestrator.clients.base import gpu_subprocess_timeout
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
@@ -48,7 +49,15 @@ async def run_propainter_inference(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        timeout = gpu_subprocess_timeout()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # Wedged child: kill it so it can't hang the worker forever (holds ~8GB VRAM).
+            log.error("propainter_timeout", timeout=timeout)
+            proc.kill()
+            await proc.wait()
+            return False
 
         if proc.returncode != 0:
             log.error("propainter_failed", error=stderr.decode('utf-8', errors='replace'))

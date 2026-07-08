@@ -48,3 +48,15 @@ def test_selects_demucs_by_default(tmp_path):
     assert result.success
     dm.assert_called_once()
     bs.assert_not_called()
+
+
+def test_unknown_engine_fails_loudly(tmp_path):
+    # An unrecognized SEPARATION_ENGINE must fail (finding 1.10), not silently fall back to Demucs.
+    settings, vram, job = _ctx("bogus_engine", tmp_path)
+    with patch("orchestrator.stages.audio_separate.BSRoformerClient") as bs, \
+         patch("orchestrator.stages.audio_separate.DemucsClient") as dm:
+        result = asyncio.run(audio_separate.run_audio_separate(job, settings, vram))
+    assert result.success is False
+    assert "SEPARATION_ENGINE" in (result.error or "")
+    bs.assert_not_called()
+    dm.assert_not_called()

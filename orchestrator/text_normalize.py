@@ -126,7 +126,7 @@ def _spell_acronym(m: re.Match) -> str:
 
 # ── Shared, language-agnostic pre-clean ─────────────────────────────────────────────────────
 _URL_RE = re.compile(r"https?://\S+|www\.[^\s]+|\b[\w.+-]+@[\w-]+\.[\w.-]+\b", re.IGNORECASE)
-_L = "A-Za-zÀ-ỹ"  # latin + Vietnamese letters
+_L = "A-Za-zÀ-ÖØ-öø-ỹ"  # latin + Vietnamese letters (skip × U+00D7 and ÷ U+00F7 in the À-ỹ range)
 
 
 def _pre_clean(text: str) -> str:
@@ -161,7 +161,7 @@ def normalize_vietnamese(text: str) -> str:
     text = re.sub(r"(\d[\d.,]*)\s*VND\b", r"\1 đồng", text)
     text = re.sub(r"\s*&\s*", " và ", text)
     text = re.sub(r"\d[\d.,]*\d|\d", lambda m: " " + _read_number_token(m.group()) + " ", text)
-    text = re.sub(r"\b[A-Z]{2,4}\b", _spell_acronym, text)
+    text = re.sub(r"\b[A-Z]{2,6}\b", _spell_acronym, text)
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
@@ -231,7 +231,9 @@ def normalize_english(text: str) -> str:
     text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 dollars", text)
     text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 dollars", text)
     text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 euros", text)
+    text = re.sub(r"(\d[\d.,]*)\s*€", r"\1 euros", text)
     text = re.sub(r"£\s*(\d[\d.,]*)", r"\1 pounds", text)
+    text = re.sub(r"(\d[\d.,]*)\s*£", r"\1 pounds", text)
     text = re.sub(r"\s*&\s*", " and ", text)
     text = re.sub(r"\d[\d.,]*\d|\d", _read_en_number, text)
     return re.sub(r"\s{2,}", " ", text).strip()
@@ -268,10 +270,13 @@ def _ko_read_sino_4(n: int) -> str:
 def _ko_read_sino(n: int) -> str:
     if n == 0:
         return "영"
+    digits = str(n)
     groups = []
     while n > 0:
         groups.append(n % 10000)
         n //= 10000
+    if len(groups) > len(_KO_BIG_UNITS):    # beyond 경 (>=21 digits): no unit word — spell digit by digit
+        return _ko_digits(digits)
     out = ""
     for gi in range(len(groups) - 1, -1, -1):
         if groups[gi]:
@@ -302,17 +307,11 @@ def _ko_digits(s: str) -> str:
     return " ".join("공" if c == "0" else _KO_SINO[int(c)] for c in s)
 
 
-def normalize_korean(text: str) -> str:
-    if not text:
-        return text
-    text = re.sub(r"\s*&\s*", " 그리고 ", text)
-    text = re.sub(r"(\d)\s*%", r"\1퍼센트", text)
-    text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 달러", text)
-    text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 달러", text)
-    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 유로", text)
-
-    # Phone numbers / codes → digit by digit (0 -> 공). Only hyphenated runs (010-1234-5678) or
-    # leading-zero runs are treated as codes; a bare number like 100000000 stays a Sino cardinal.
+def _ko_pre(text: str) -> str:
+    """Spell Korean phone numbers / leading-zero codes digit by digit (0 -> 공). Only hyphenated
+    runs (010-1234-5678) or leading-zero runs are treated as codes; a bare number like 100000000
+    stays a Sino cardinal. MUST run BEFORE _ranges_to_words so the inner '-' separators aren't
+    turned into '에서' range words first (mirrors the vi path where _vi_pre runs before ranges)."""
     def _ko_phone(m):
         digs = re.sub(r"\D", "", m.group())
         if len(digs) >= 9 or (digs.startswith("0") and len(digs) >= 8):
@@ -321,6 +320,24 @@ def normalize_korean(text: str) -> str:
     text = re.sub(r"(?<!\d)\+?\d[\d]*(?:-\d[\d]*)+(?!\d)", _ko_phone, text)   # hyphenated
     text = re.sub(r"(?<!\d)0\d{7,}(?!\d)",
                   lambda m: " " + _ko_digits(m.group()) + " ", text)          # bare leading-zero
+    return text
+
+
+def normalize_korean(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r"\s*&\s*", " 그리고 ", text)
+    text = re.sub(r"(?<![^\s])-(?=\d)", "마이너스 ", text)    # standalone leading minus: -5 -> 마이너스 5
+    text = re.sub(r"(\d)\s*%", r"\1퍼센트", text)
+    text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 달러", text)
+    text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 달러", text)
+    text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 유로", text)
+    text = re.sub(r"(\d[\d.,]*)\s*€", r"\1 유로", text)
+    text = re.sub(r"£\s*(\d[\d.,]*)", r"\1 파운드", text)
+    text = re.sub(r"(\d[\d.,]*)\s*£", r"\1 파운드", text)
+
+    # Phone numbers / codes → digit by digit (0 -> 공); idempotent if _ko_pre already ran in dispatch.
+    text = _ko_pre(text)
 
     # Decimals: 3.14 -> 삼 점 일사.
     text = re.sub(r"(?<!\d)(\d+)\.(\d+)",
@@ -402,12 +419,16 @@ def normalize_german(text: str) -> str:
     if not text:
         return text
     text = re.sub(r"\s*&\s*", " und ", text)
+    text = re.sub(r"(?<![^\s])-(?=\d)", "minus ", text)     # standalone leading minus: -5 -> minus 5
     text = re.sub(r"(\d)\s*%", r"\1 Prozent", text)
     text = re.sub(r"€\s*(\d[\d.,]*)", r"\1 Euro", text)
     text = re.sub(r"(\d[\d.,]*)\s*€", r"\1 Euro", text)
     text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1 Dollar", text)
-    # Ordinal: a number + "." before a space/word/end (e.g. "3. Mai") — do BEFORE separators.
-    text = re.sub(r"(?<!\d)(\d+)\.(?=\s|$|[A-Za-zÄÖÜäöü])",
+    text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1 Dollar", text)
+    # Ordinal: number + "." only when a following WORD continues the phrase ("3. Mai" -> dritte).
+    # A sentence-final number ("... ist 42.") has no following word, so it stays a cardinal and the
+    # period is preserved by the later \d+ pass — never drop the sentence period.
+    text = re.sub(r"(?<!\d)(\d+)\.(?=\s+[A-Za-zÄÖÜäöü])",
                   lambda m: _de_ordinal(int(m.group(1))), text)
     # Thousands separator dots ("1.234.567" -> "1234567").
     text = re.sub(r"(\d{1,3})(?:\.(\d{3}))+(?=\D|$)", lambda m: m.group().replace(".", ""), text)
@@ -468,10 +489,13 @@ def _ja_4(n: int) -> str:
 def _ja_read(n: int) -> str:
     if n == 0:
         return "ゼロ"
+    digits = str(n)
     groups = []
     while n > 0:
         groups.append(n % 10000)
         n //= 10000
+    if len(groups) > len(_JA_BIG):        # beyond 京 (>=21 digits): no unit word — read digit by digit
+        return _ja_frac(digits)
     out = ""
     for gi in range(len(groups) - 1, -1, -1):
         if groups[gi]:
@@ -487,6 +511,7 @@ def normalize_japanese(text: str) -> str:
     if not text:
         return text
     text = re.sub(r"\s*&\s*", " と ", text)
+    text = re.sub(r"(?<![^\s])-(?=\d)", "マイナス", text)     # standalone leading minus: -5 -> マイナス5
     text = re.sub(r"(\d)\s*%", r"\1パーセント", text)
     text = re.sub(r"\$\s*(\d[\d.,]*)", r"\1ドル", text)
     text = re.sub(r"(\d[\d.,]*)\s*\$", r"\1ドル", text)
@@ -549,7 +574,9 @@ def normalize_for_tts(text: str, lang_code: str) -> str:
         return normalize_english(_ranges_to_words(text, "to"))
     if lang_code == "ko":
         # Korean uses its own script — do NOT strip Hangul; expand numbers by Sino/native counter.
-        return normalize_korean(_ranges_to_words(text, "에서"))
+        # _ko_pre (phone/code digit-spelling) MUST run before _ranges_to_words, else a phone like
+        # '010-1234-5678' has its hyphens turned into '에서' range words and reads as garbage.
+        return normalize_korean(_ranges_to_words(_ko_pre(text), "에서"))
     if lang_code == "ja":
         return normalize_japanese(_ranges_to_words(text, "から"))
     if lang_code == "de":

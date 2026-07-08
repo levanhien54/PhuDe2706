@@ -27,6 +27,24 @@ def test_english_euro_pound():
     assert "pounds" in normalize_english("£10")
 
 
+def test_english_trailing_euro_pound():
+    # 0.5: trailing symbols must mirror the leading ones (5€ / 10£), like the Vietnamese path.
+    assert "euros" in normalize_english("5€")
+    assert "pounds" in normalize_english("10£")
+
+
+def test_vn_acronym_five_and_six_letters():
+    # T6: the speller used to cap at 4 letters, leaving 5-6 letter acronyms unspoken.
+    assert normalize_vietnamese("UNESCO") == "u nờ e ét xê ô"
+    assert normalize_vietnamese("HTTPS") == "hắt tê tê pê ét"
+
+
+def test_pre_clean_keeps_times_and_divide_signs():
+    # T6: × (U+00D7) and ÷ (U+00F7) are math operators, not letters — must not be split from digits.
+    assert _pre_clean("2×3") == "2×3"
+    assert _pre_clean("6÷2") == "6÷2"
+
+
 def test_dispatch_pre_clean_applies_all_langs():
     assert "*" not in normalize_for_tts("**Xin chào**", "vi")
     assert normalize_for_tts("Tuyệt!!!", "vi").count("!") == 1

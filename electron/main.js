@@ -456,25 +456,44 @@ function checkSetup() {
 
 app.setAppUserModelId('com.videodubbing.app');
 
-app.whenReady().then(async () => {
-  if (!checkSetup()) { app.quit(); return; }
+// Single-instance lock: a second launch must NOT spawn a duplicate set of Python services (they
+// would fight over ports 8000/8001/9880/3900) or a second window/tray. If we don't get the lock,
+// another instance owns it — quit immediately; that instance's 'second-instance' handler focuses
+// its existing window.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createMain();
+    }
+  });
 
-  createTray();
-  createSplash();
-  startAllServices();
-  const stopPoll = pollHealthToSplash(splashWin);
+  app.whenReady().then(async () => {
+    if (!checkSetup()) { app.quit(); return; }
 
-  try {
-    await waitForPort(8000, 120_000);
-    console.log('[Electron] Orchestrator ready on :8000');
-  } catch (e) {
-    console.error('[Electron]', e.message);
-    // Services may still come up — open window anyway, UI will show errors
-  }
+    createTray();
+    createSplash();
+    startAllServices();
+    const stopPoll = pollHealthToSplash(splashWin);
 
-  stopPoll();
-  createMain();
-});
+    try {
+      await waitForPort(8000, 120_000);
+      console.log('[Electron] Orchestrator ready on :8000');
+    } catch (e) {
+      console.error('[Electron]', e.message);
+      // Services may still come up — open window anyway, UI will show errors
+    }
+
+    stopPoll();
+    createMain();
+  });
+}
 
 // Keep app alive when all windows are closed (tray mode)
 app.on('window-all-closed', () => {

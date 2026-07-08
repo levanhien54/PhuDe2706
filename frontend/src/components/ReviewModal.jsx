@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Play } from 'lucide-react';
+import { X, Save, Play, AlertCircle } from 'lucide-react';
 import { API_BASE } from '../api';
 
 export default function ReviewModal({ jobId, onClose, onResume }) {
   const [segments, setSegments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saveStatuses, setSaveStatuses] = useState({});
+  const [resuming, setResuming] = useState(false);
   const debounceTimers = useRef({});
+  // Edits whose save hasn't succeeded yet (debounce still pending, in-flight, or failed),
+  // keyed by segment id. Flushed before resume so no edit is lost.
+  const pendingSaves = useRef({});
 
   useEffect(() => {
     fetchSegments();
@@ -21,12 +25,34 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
   const fetchSegments = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/jobs/${jobId}/segments`);
+      if (!res.ok) throw new Error(`load failed (HTTP ${res.status})`);
       const data = await res.json();
-      setSegments(data.segments);
+      setSegments(data.segments || []);
     } catch (e) {
       console.error(e);
+      setSegments([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Persist one segment immediately (bypassing the debounce). Clears it from the pending set on
+  // success; marks an 'error' save state on failure so the edit is never silently lost.
+  const saveSegment = async (id, newText) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/segments`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, translated_text: newText })
+      });
+      if (!res.ok) throw new Error(`save failed (HTTP ${res.status})`);
+      delete pendingSaves.current[id];
+      setSaveStatuses(prev => ({ ...prev, [id]: 'saved' }));
+      return true;
+    } catch (e) {
+      console.error(e);
+      setSaveStatuses(prev => ({ ...prev, [id]: 'error' }));
+      return false;
     }
   };
 
@@ -34,33 +60,42 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
     // Optimistic update immediately
     setSegments(prev => prev.map(s => s.id === id ? { ...s, translated_text: newText } : s));
     setSaveStatuses(prev => ({ ...prev, [id]: 'saving' }));
+    pendingSaves.current[id] = { id, text: newText };
 
     // Debounce the API call 500ms
     clearTimeout(debounceTimers.current[id]);
-    debounceTimers.current[id] = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/jobs/${jobId}/segments`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, translated_text: newText })
-        });
-        if (!res.ok) throw new Error(`save failed (HTTP ${res.status})`);
-        setSaveStatuses(prev => ({ ...prev, [id]: 'saved' }));
-      } catch (e) {
-        console.error(e);
-        setSaveStatuses(prev => ({ ...prev, [id]: 'error' }));
-      }
-    }, 500);
+    debounceTimers.current[id] = setTimeout(() => { saveSegment(id, newText); }, 500);
+  };
+
+  // Cancel any debounce timers and persist every still-pending edit right away.
+  // Returns true only if all pending saves succeeded.
+  const flushPendingSaves = async () => {
+    Object.values(debounceTimers.current).forEach(clearTimeout);
+    debounceTimers.current = {};
+    const results = await Promise.all(
+      Object.values(pendingSaves.current).map(({ id, text }) => saveSegment(id, text))
+    );
+    return results.every(Boolean);
   };
 
   const handleResume = async () => {
+    if (resuming) return;
+    setResuming(true);
     try {
+      // Flush outstanding autosaves first so no edit is lost when phase-2 (TTS) resumes.
+      const allSaved = await flushPendingSaves();
+      if (!allSaved) {
+        alert('Một số chỉnh sửa chưa lưu được. Vui lòng kiểm tra kết nối và thử lại trước khi tiếp tục.');
+        return;
+      }
       const res = await fetch(`${API_BASE}/api/jobs/${jobId}/resume`, { method: 'POST' });
       if (!res.ok) throw new Error(`resume failed (HTTP ${res.status})`);
       onResume();
     } catch (e) {
       console.error(e);
       alert('Không thể tiếp tục lồng tiếng — job chưa sẵn sàng hoặc backend lỗi. Vui lòng thử lại.');
+    } finally {
+      setResuming(false);
     }
   };
 
@@ -94,6 +129,11 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
                     {saveStatus === 'saved' && (
                       <div className="save-indicator saved">
                         <Save size={12} /> Đã lưu
+                      </div>
+                    )}
+                    {saveStatus === 'error' && (
+                      <div className="save-indicator" style={{ color: 'var(--error)' }}>
+                        <AlertCircle size={12} /> Lưu lỗi — thử lại
                       </div>
                     )}
 
@@ -135,8 +175,8 @@ export default function ReviewModal({ jobId, onClose, onResume }) {
         
         <div style={{ padding: '20px', borderTop: '1px solid var(--border-light)', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
           <button className="btn btn-outline" onClick={onClose}>Để sau</button>
-          <button className="btn btn-primary" onClick={handleResume} disabled={loading}>
-            <Play size={18}/> Duyệt & Chạy tiếp (TTS)
+          <button className="btn btn-primary" onClick={handleResume} disabled={loading || resuming}>
+            <Play size={18}/> {resuming ? 'Đang lưu & chạy tiếp…' : 'Duyệt & Chạy tiếp (TTS)'}
           </button>
         </div>
       </div>

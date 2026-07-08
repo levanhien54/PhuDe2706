@@ -20,10 +20,10 @@ function Warn($m) { Write-Host "  [!!] $m" -ForegroundColor Yellow }
 
 # robocopy mirror helper (treats robocopy's success exit codes 0-7 as OK)
 function Mirror($from, $to, [string[]]$xd = @(), [string[]]$xf = @()) {
-    $args = @($from, $to, '/MIR', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP')
-    if ($xd.Count) { $args += '/XD'; $args += $xd }
-    if ($xf.Count) { $args += '/XF'; $args += $xf }
-    robocopy @args | Out-Null
+    $roboArgs = @($from, $to, '/MIR', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP')
+    if ($xd.Count) { $roboArgs += '/XD'; $roboArgs += $xd }
+    if ($xf.Count) { $roboArgs += '/XF'; $roboArgs += $xf }
+    robocopy @roboArgs | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($from -> $to), code $LASTEXITCODE" }
 }
 

@@ -130,13 +130,25 @@ if ($env:LLM_BACKEND -eq "vllm") {
 # 5. Start Ollama
 if ($env:LLM_BACKEND -eq "ollama") {
     Write-Host "  -> Đang bật Ollama Server (Port 11434)..."
-    $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
-    $ollamaExe = if ($ollamaCmd) { $ollamaCmd.Source } else { $null }
-    if (-not $ollamaExe) { $ollamaExe = "C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\ollama.exe" }
-    # $env:OLLAMA_MODELS is already set above and Start-Process inherits this process's
-    # environment, so launch ollama directly. Routing through `cmd /c set VAR=... && ...`
-    # broke (or injected) when the install path contained cmd metacharacters (& ^ ( ) %).
-    Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Minimized
+    # Prefer the bundled Ollama that ships with the app at <ProjectRoot>\ollama\ollama.exe
+    # (its CUDA libs live under ollama\lib\ollama\cuda_v12). Fall back to one already on PATH.
+    $ollamaExe = $null
+    $bundledOllama = "$ProjectRoot\ollama\ollama.exe"
+    if (Test-Path $bundledOllama) {
+        $ollamaExe = $bundledOllama
+        $env:PATH = "$ProjectRoot\ollama;$env:PATH"
+    } else {
+        $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
+        if ($ollamaCmd) { $ollamaExe = $ollamaCmd.Source }
+    }
+    if (-not $ollamaExe) {
+        Write-Host "  [XX] Không tìm thấy Ollama (bundled hoặc trên PATH). Cài Ollama hoặc đặt vào '$bundledOllama'." -ForegroundColor Red
+    } else {
+        # $env:OLLAMA_MODELS is already set above and Start-Process inherits this process's
+        # environment, so launch ollama directly. Routing through `cmd /c set VAR=... && ...`
+        # broke (or injected) when the install path contained cmd metacharacters (& ^ ( ) %).
+        Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Minimized
+    }
 }
 
 # 6. Start Frontend

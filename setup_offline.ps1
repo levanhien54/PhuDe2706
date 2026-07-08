@@ -9,6 +9,7 @@ Set-Location $ProjectRoot
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
+function Write-Warn($msg) { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "  [XX] $msg" -ForegroundColor Red; exit 1 }
 
 $OfflineDir = "$ProjectRoot\offline_wheels"
@@ -37,28 +38,41 @@ $BasePipArgs = @('--no-index', "--find-links=$OfflineDir")
 # PyTorch
 Write-Host "Cài đặt PyTorch..."
 & $PipExe install @BasePipArgs torch torchvision torchaudio
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt PyTorch thất bại." }
 
 # Dịch vụ
 Write-Host "Cài đặt Orchestrator..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\orchestrator\requirements.txt"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt Orchestrator requirements thất bại." }
 Write-Host "Cài đặt WhisperX (engine từ sdist đã đóng gói, không dùng git)..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\whisperx-service\requirements.txt"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt WhisperX requirements thất bại." }
 & $PipExe install @BasePipArgs --pre whisperx
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt WhisperX engine (--pre) thất bại." }
 Write-Host "Cài đặt TTS..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\tts-service\requirements.txt"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt TTS requirements thất bại." }
 Write-Host "Cài đặt OmniVoice (engine mặc định)..."
 & $PipExe install @BasePipArgs -r "$ProjectRoot\omnivoice-service\requirements.txt"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt OmniVoice requirements thất bại." }
 
-# Phụ thuộc khác
+# Phụ thuộc khác — vllm KHÔNG gộp cùng (1 wheel thiếu sẽ hủy cả lệnh, không gói nào được cài,
+# nhưng script vẫn báo thành công). Tách best-effort như setup_native.ps1.
 Write-Host "Cài đặt các gói phụ thuộc mở rộng..."
-& $PipExe install @BasePipArgs demucs vllm einops scipy huggingface_hub diffusers
+& $PipExe install @BasePipArgs demucs einops scipy huggingface_hub diffusers
+if ($LASTEXITCODE -ne 0) { Write-Fail "Cài đặt các gói phụ thuộc mở rộng (demucs/einops/scipy/huggingface_hub/diffusers) thất bại." }
+Write-Host "Cài đặt vLLM (tuỳ chọn - thay thế Ollama, best-effort)..."
+& $PipExe install @BasePipArgs vllm
+if ($LASTEXITCODE -ne 0) { Write-Warn "Không cài được vLLM. Hãy đảm bảo dùng Ollama làm LLM_BACKEND." }
 Write-Host "Cài đặt mmcv (cần cho ProPainter)..."
 & $PipExe install @BasePipArgs "mmcv>=2.0.0"
+if ($LASTEXITCODE -ne 0) { Write-Warn "Cài đặt mmcv thất bại. Tính năng ProPainter có thể không hoạt động." }
 
 # LatentSync
 if (Test-Path "$ProjectRoot\models\latentsync\requirements.txt") {
     Write-Host "Cài đặt phụ thuộc LatentSync..."
     & $PipExe install @BasePipArgs -r "$ProjectRoot\models\latentsync\requirements.txt"
+    if ($LASTEXITCODE -ne 0) { Write-Warn "Cài đặt phụ thuộc LatentSync thất bại (LatentSync tuỳ chọn)." }
 }
 
 Write-OK "Đã cài đặt xong thư viện Backend."

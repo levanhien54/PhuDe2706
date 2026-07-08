@@ -42,7 +42,7 @@ foreach ($t in 'node','npm') {
 # base Python 3.10 (becomes python-runtime/)
 $py = if ($env:PYTHON_RUNTIME_SRC) { $env:PYTHON_RUNTIME_SRC } else { "$env:LOCALAPPDATA\Programs\Python\Python310" }
 if (Test-Path "$py\python.exe") {
-    $ver = (& "$py\python.exe" --version 2>&1)
+    $ver = (& "$py\python.exe" --version 2>$null)
     if ("$ver" -match '3\.10\.') { OK "Python 3.10 base: $py ($ver)" }
     else { Bad "Python o '$py' la '$ver' -- can 3.10.x. Set `$env:PYTHON_RUNTIME_SRC."; $fail++ }
 } else { Bad "Khong tim thay Python 3.10 base tai '$py'. Cai Python 3.10 hoac set `$env:PYTHON_RUNTIME_SRC."; $fail++ }

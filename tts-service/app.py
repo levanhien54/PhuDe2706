@@ -2,12 +2,14 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
+import threading
 import time
 import traceback
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -26,12 +28,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GPT_SOVITS_DIR = os.environ.get("GPT_SOVITS_DIR", "/app/GPT-SoVITS")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Default to a project-relative dir (the old "/app/..." default only existed inside the Docker
+# image and never resolves on the Windows deployment target).
+GPT_SOVITS_DIR = os.environ.get("GPT_SOVITS_DIR", os.path.join(_PROJECT_ROOT, "GPT-SoVITS"))
 DEFAULT_PROMPT_TEXT = os.environ.get("GPT_SOVITS_PROMPT_TEXT", "")
 DEFAULT_PROMPT_LANG = os.environ.get("GPT_SOVITS_PROMPT_LANG", "auto")
+# edge-tts is an ONLINE Microsoft service — disabled by default in this offline product.
+# Set TTS_ALLOW_ONLINE_FALLBACK=1 to explicitly permit it as a last-resort fallback.
+ALLOW_ONLINE_FALLBACK = os.environ.get("TTS_ALLOW_ONLINE_FALLBACK", "0").strip() == "1"
 
 if os.path.isdir(GPT_SOVITS_DIR):
     os.chdir(GPT_SOVITS_DIR)
+
+
+# GPT-SoVITS is not safe to init or run concurrently on a single GPU: two overlapping first
+# requests could double-init (leaking one instance's VRAM), and tts.run() drives a
+# non-reentrant CUDA model. _load_lock serializes lazy init; _infer_lock serializes generation.
+_load_lock = threading.Lock()
+_infer_lock = threading.Lock()
+
+
+def _ensure_ffmpeg_on_path():
+    """edge-tts output is transcoded via a bare "ffmpeg" resolved on PATH. Make the bundled
+    FFmpeg discoverable even when launched without PATH set up (e.g. Electron)."""
+    import shutil
+    if shutil.which("ffmpeg"):
+        return
+    for d in (
+        os.path.join(_PROJECT_ROOT, "ffmpeg_extracted", "ffmpeg-master-latest-win64-gpl", "bin"),
+        _PROJECT_ROOT,
+    ):
+        if os.path.exists(os.path.join(d, "ffmpeg.exe")):
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+            break
+
+
+_ensure_ffmpeg_on_path()
 
 # edge-tts voice map by language code
 EDGE_TTS_VOICES = {
@@ -49,7 +82,7 @@ _gpt_sovits_ok = None  # None=unknown, True=available, False=unavailable
 
 
 class TTSRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=20000)
     text_language: str = "vi"
     refer_wav_path: str
     output_path: str
@@ -111,19 +144,33 @@ def health():
 
 @app.post("/unload")
 def unload():
+    global _tts_instance, _tts_config
     try:
-        import gc
-        gc.collect()
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # Drain any in-flight generation, then actually drop the model references so the VRAM
+        # can be collected — empty_cache() alone does nothing while the globals still hold it.
+        with _infer_lock:
+            _tts_instance = None
+            _tts_config = None
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     except Exception as e:
         log.warning("tts_unload_failed: %s", e)
     return {"status": "unloaded"}
 
 
 async def _synthesize_edge_tts_async(text: str, lang: str, output_path: str):
-    """Use Microsoft edge-tts (online, free) for synthesis."""
+    """Use Microsoft edge-tts (ONLINE) for synthesis. Refuses to run unless explicitly
+    enabled, so an offline deployment fails loudly instead of silently hitting the network."""
+    if not ALLOW_ONLINE_FALLBACK:
+        raise RuntimeError(
+            "GPT-SoVITS unavailable and the edge-tts fallback is disabled. edge-tts is an "
+            "online Microsoft service, but this is an offline product. Fix the GPT-SoVITS "
+            f"installation (GPT_SOVITS_DIR={GPT_SOVITS_DIR}, exists={os.path.isdir(GPT_SOVITS_DIR)}) "
+            "or set TTS_ALLOW_ONLINE_FALLBACK=1 to explicitly permit the online fallback."
+        )
     import edge_tts
     import subprocess
 
@@ -134,18 +181,29 @@ async def _synthesize_edge_tts_async(text: str, lang: str, output_path: str):
     abs_output = os.path.abspath(output_path)
     out_dir = os.path.dirname(abs_output)
     os.makedirs(out_dir, exist_ok=True)
-    tmp_mp3 = os.path.join(out_dir, os.path.basename(abs_output).replace(".wav", "_tts_tmp.mp3"))
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(tmp_mp3)
-    result = await asyncio.to_thread(
-        subprocess.run,
-        ["ffmpeg", "-y", "-i", tmp_mp3, "-ar", "24000", "-ac", "1", abs_output],
-        capture_output=True, text=True,
-    )
-    if os.path.exists(tmp_mp3):
-        os.remove(tmp_mp3)
-    if result.returncode != 0 or not os.path.exists(abs_output):
-        raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[:300]}")
+    # Unique tmp name via tempfile — str.replace(".wav", ...) collided for non-.wav outputs
+    # and for concurrent requests writing the same basename.
+    _base = os.path.splitext(os.path.basename(abs_output))[0]
+    _fd, tmp_mp3 = tempfile.mkstemp(prefix=_base + "_tts_", suffix=".mp3", dir=out_dir)
+    os.close(_fd)
+    try:
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(tmp_mp3)
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["ffmpeg", "-y", "-i", tmp_mp3, "-ar", "24000", "-ac", "1", abs_output],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0 or not os.path.exists(abs_output):
+            raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[:300]}")
+    finally:
+        # Always clean up the intermediate mp3 — even if ffmpeg is missing (FileNotFoundError)
+        # or the conversion fails.
+        if os.path.exists(tmp_mp3):
+            try:
+                os.remove(tmp_mp3)
+            except OSError:
+                pass
 
     log.info("edge-tts done in %.1fs -> %s", time.monotonic() - t0, output_path)
 
@@ -155,17 +213,20 @@ _tts_config = None
 
 def _get_gpt_sovits_instance():
     global _tts_instance, _tts_config
-    if _tts_instance is not None:
+    # Serialize lazy init so two concurrent first-requests can't both build a TTS instance
+    # (double VRAM, one leaked). Double-checked under the lock.
+    with _load_lock:
+        if _tts_instance is not None:
+            return _tts_instance
+
+        _add_sovits_paths()
+        from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
+
+        cfg_path = os.path.join(GPT_SOVITS_DIR, "GPT_SoVITS", "configs", "tts_infer.yaml")
+        _tts_config = TTS_Config(cfg_path)
+        _tts_instance = TTS(_tts_config)
+        log.info("GPT-SoVITS TTS instance created")
         return _tts_instance
-
-    _add_sovits_paths()
-    from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
-
-    cfg_path = os.path.join(GPT_SOVITS_DIR, "GPT_SoVITS", "configs", "tts_infer.yaml")
-    _tts_config = TTS_Config(cfg_path)
-    _tts_instance = TTS(_tts_config)
-    log.info("GPT-SoVITS TTS instance created")
-    return _tts_instance
 
 
 def _synthesize_gpt_sovits(text, lang, refer_wav_path, output_path, prompt_text, prompt_language):
@@ -191,9 +252,11 @@ def _synthesize_gpt_sovits(text, lang, refer_wav_path, output_path, prompt_text,
     }
     sr = None
     chunks = []
-    for item in tts.run(inputs):
-        sr = item[0]
-        chunks.append(item[1])
+    # The shared GPT-SoVITS CUDA model is not reentrant — only one generation may run at a time.
+    with _infer_lock:
+        for item in tts.run(inputs):
+            sr = item[0]
+            chunks.append(item[1])
 
     if not chunks:
         raise RuntimeError("GPT-SoVITS returned no audio")

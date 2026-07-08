@@ -11,7 +11,7 @@ import numpy as np
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [omnivoice] %(message)s")
 log = logging.getLogger("omnivoice")
@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 class TTSRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1, max_length=20000)
     language: str = "vi"
     output_path: str
     reference_audio: str | None = None
@@ -52,6 +52,10 @@ _replicas: list = []
 _free_idxs: list = []     # indices of replicas currently available
 _inflight = 0             # replicas currently executing generate()
 _unloading = False
+# Lock-free readiness counter for /health: an int assignment/read is atomic under the GIL, so
+# /health can report the replica count WITHOUT acquiring _pool_cond (which is held for the whole
+# multi-second cold model load). Kept in sync with _replicas under the condition.
+_ready_count = 0
 # One condition guards the whole pool (replica list, free-list, in-flight count, unload flag).
 # A synth is a "reader" that grabs a free replica; /unload is a "writer" that flips _unloading
 # and waits for in-flight generations to drain BEFORE freeing — so it never tears the pool out
@@ -61,7 +65,7 @@ _pool_cond = threading.Condition()
 
 def _ensure_pool_locked():
     """Load the replica pool if empty. Caller MUST hold _pool_cond."""
-    global _replicas, _free_idxs
+    global _replicas, _free_idxs, _ready_count
     if _replicas:
         return
     from omnivoice import OmniVoice
@@ -84,6 +88,7 @@ def _ensure_pool_locked():
         raise RuntimeError("Failed to load any OmniVoice replica")
     _replicas = reps
     _free_idxs = list(range(len(reps)))
+    _ready_count = len(reps)
     log.info("OmniVoice pool ready: %d replica(s)", len(_replicas))
 
 
@@ -147,12 +152,16 @@ def _synthesize_omnivoice(text, language, reference_audio, output_path, target_d
     # the orchestrator still snaps it to the exact length.
     dur = target_duration if (target_duration and target_duration > 0) else None
     audio_tensor = None
+    # Whether the final audio actually used the requested cloned voice. Reported to the caller
+    # so the orchestrator can log/flag segments that silently fell back to the generic voice.
+    requested_clone = bool(reference_audio and os.path.exists(reference_audio))
+    voice_cloned = False
     # Grab an exclusive replica; this blocks while /unload is draining and bumps the in-flight
     # count so unload cannot free the pool while this generate() is running.
     idx = _acquire_replica()
     model = _replicas[idx]
     try:
-        if reference_audio and os.path.exists(reference_audio):
+        if requested_clone:
             try:
                 audio_tensor = model.generate(text, ref_audio=reference_audio, ref_text=ref_text, language=language, duration=dur, **_GEN_KWARGS)
             except ValueError as e:
@@ -166,6 +175,7 @@ def _synthesize_omnivoice(text, language, reference_audio, output_path, target_d
                     log.error(f"ValueError during generation: {e}. Falling back to non-cloned voice.")
             except Exception as e:
                 log.error(f"Error during voice cloning generation: {e}. Falling back to non-cloned voice.")
+            voice_cloned = audio_tensor is not None
 
         if audio_tensor is None:
             log.info("Generating without reference audio (fallback or no ref provided)")
@@ -207,13 +217,15 @@ def _synthesize_omnivoice(text, language, reference_audio, output_path, target_d
         audio_data = audio_data.T
         
     sf.write(abs_output, audio_data, sr)
-    log.info("omnivoice done in %.1fs -> %s", time.monotonic() - t0, abs_output)
+    log.info("omnivoice done in %.1fs -> %s (voice_cloned=%s)", time.monotonic() - t0, abs_output, voice_cloned)
+    return voice_cloned
 
 @app.get("/health")
 def health():
-    # Lazy pool: report readiness without forcing a load (200 even before first request).
-    with _pool_cond:
-        n = len(_replicas)
+    # Lazy pool: report readiness without forcing a load (200 even before first request) and
+    # WITHOUT acquiring _pool_cond — otherwise /health would block for the whole cold model
+    # load (which holds the condition end-to-end) and fail liveness/readiness probes.
+    n = _ready_count
     return {"status": "ok", "model_loaded": n > 0, "replicas": n}
 
 
@@ -221,7 +233,7 @@ def health():
 def unload():
     """Free all replicas so phase-1 (STT/LLM) can reclaim VRAM between jobs.
     Waits for any in-flight generate() to finish first so VRAM is actually released."""
-    global _replicas, _free_idxs, _unloading
+    global _replicas, _free_idxs, _unloading, _ready_count
     with _pool_cond:
         _unloading = True
         _pool_cond.notify_all()        # nudge waiters to re-check the flag
@@ -229,6 +241,7 @@ def unload():
             _pool_cond.wait()
         _replicas = []
         _free_idxs = []
+        _ready_count = 0
         _unloading = False
         _pool_cond.notify_all()
     if torch.cuda.is_available():
@@ -241,15 +254,15 @@ def unload():
 async def synthesize(req: TTSRequest):
     log.info(f"tts request: chars={len(req.text)} lang={req.language} ref={req.reference_audio}")
     try:
-        await asyncio.to_thread(
+        voice_cloned = await asyncio.to_thread(
             _synthesize_omnivoice,
             req.text, req.language, req.reference_audio, req.output_path, req.target_duration, req.ref_text
         )
     except Exception:
         log.error(f"tts failed:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="tts failed")
-        
+
     if not os.path.exists(req.output_path):
         raise HTTPException(status_code=500, detail="tts produced no output")
-        
-    return {"output_path": req.output_path}
+
+    return {"output_path": req.output_path, "voice_cloned": bool(voice_cloned)}

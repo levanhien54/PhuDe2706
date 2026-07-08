@@ -14,12 +14,25 @@ import traceback
 # We preload them via ctypes so Windows' LoadLibrary reuses the handles.
 # ---------------------------------------------------------------------------
 def _preload_cuda12_dlls():
-    _CUDA12_PATHS = [
-        # Ollama bundles cudart64_12.dll + cublas DLLs for its GPU backend
-        r"C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\lib\ollama\cuda_v12\cudart64_12.dll",
-        r"C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\lib\ollama\cuda_v12\cublas64_12.dll",
-        r"C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\lib\ollama\cuda_v12\cublasLt64_12.dll",
-    ]
+    # The deployment bundle ships the CUDA 12 runtime DLLs under
+    # <ProjectRoot>/ollama/lib/ollama/cuda_v12/. Compute candidate roots from an
+    # env override (VD_ROOT / PROJECT_ROOT) and, as a fallback, the project root
+    # relative to this service file — never a hardcoded per-machine absolute path.
+    _DLL_NAMES = ("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
+    roots = []
+    for _env in ("VD_ROOT", "PROJECT_ROOT"):
+        _val = os.environ.get(_env, "").strip()
+        if _val:
+            roots.append(_val)
+    # <ProjectRoot> is the parent of this service directory.
+    roots.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    _CUDA12_PATHS = []
+    for _root in roots:
+        _cuda_dir = os.path.join(_root, "ollama", "lib", "ollama", "cuda_v12")
+        for _name in _DLL_NAMES:
+            _CUDA12_PATHS.append(os.path.join(_cuda_dir, _name))
+
     # Also scan venv/nvidia/* for cuBLAS and nvrtc
     nvidia_root = os.path.join(os.path.dirname(__file__), "..", "venv", "lib", "site-packages", "nvidia")
     nvidia_root = os.path.normpath(nvidia_root)
@@ -37,6 +50,17 @@ def _preload_cuda12_dlls():
                 loaded.append(os.path.basename(path))
             except OSError:
                 pass
+    if not any(name.startswith("cublas64_12") for name in loaded):
+        # Logging isn't configured yet (this runs before basicConfig); use stderr so the
+        # operator sees clearly that GPU STT will likely fail / fall back to CPU.
+        print(
+            "[whisperx] WARNING: cublas64_12.dll was not found or could not be loaded from "
+            "any candidate path; ctranslate2 GPU STT may fall back to CPU or fail. Searched "
+            "ollama/lib/ollama/cuda_v12 under: " + ", ".join(roots) + " (plus venv nvidia "
+            "site-packages). Set VD_ROOT or PROJECT_ROOT to the project root that contains "
+            "ollama/lib/ollama/cuda_v12.",
+            file=sys.stderr,
+        )
     return loaded
 
 _preloaded = _preload_cuda12_dlls()
@@ -202,15 +226,18 @@ def health():
 @app.post("/unload")
 def unload():
     global _model, _align_cache, _diarize_model
-    _model = None
-    _align_cache.clear()
-    _diarize_model = None
-    
-    if DEVICE == "cuda":
-        import torch
-        torch.cuda.empty_cache()
-        log.info("Models unloaded and CUDA cache cleared.")
-        
+    # Hold the inference lock so we drain any in-flight transcribe() before tearing down the
+    # model — otherwise we'd free CUDA memory out from under a running generate().
+    with _infer_lock:
+        _model = None
+        _align_cache.clear()
+        _diarize_model = None
+
+        if DEVICE == "cuda":
+            import torch
+            torch.cuda.empty_cache()
+            log.info("Models unloaded and CUDA cache cleared.")
+
     return {"status": "unloaded"}
 
 
@@ -221,11 +248,18 @@ async def transcribe(file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
-        data = await file.read()
-        tmp.write(data)
+        # Stream the upload to disk in chunks instead of buffering the whole file in RAM
+        # (a multi-hundred-MB audio/video track would otherwise spike memory per request).
+        total = 0
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            total += len(chunk)
         tmp.flush()
         tmp.close()
-        log.info("received %.2f MB -> %s", len(data) / 1e6, tmp.name)
+        log.info("received %.2f MB -> %s", total / 1e6, tmp.name)
 
         def _run_inference():
             # Runs in a worker thread so the multi-minute, CPU/GPU-bound whisperx calls do not
@@ -286,5 +320,14 @@ async def transcribe(file: UploadFile = File(...)):
         log.error("transcription failed:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail="transcription failed")
     finally:
-        if os.path.exists(tmp.name):
-            os.remove(tmp.name)
+        # Ensure the handle is closed before removing — on Windows os.remove raises
+        # PermissionError if the file is still open (e.g. an error before tmp.close()).
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(tmp.name):
+                os.remove(tmp.name)
+        except OSError as e:
+            log.warning("could not remove temp file %s: %s", tmp.name, e)

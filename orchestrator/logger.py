@@ -3,6 +3,15 @@ import logging
 import sys
 
 
+def _log_file_path() -> str:
+    """Absolute path of the orchestrator log file, derived from settings.data_dir so logs land
+    next to the rest of the app data (not in a cwd-relative 'data/' that depends on where the
+    process happened to be started)."""
+    import os
+    from orchestrator.config import get_settings
+    return os.path.join(get_settings().data_dir, "orchestrator.log")
+
+
 def setup_logging(log_level: str = "INFO") -> None:
     # Force UTF-8 on Windows
     if sys.platform == "win32":
@@ -14,10 +23,11 @@ def setup_logging(log_level: str = "INFO") -> None:
     # Setup RotatingFileHandler
     import logging.handlers
     import os
-    
-    os.makedirs("data", exist_ok=True)
+
+    log_path = _log_file_path()
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
-        "data/orchestrator.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
+        log_path, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
     )
     console_handler = logging.StreamHandler(sys.stdout)
     

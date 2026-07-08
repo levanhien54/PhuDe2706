@@ -36,17 +36,35 @@ job_queue = asyncio.Queue()
 # is the job_id for both run_pipeline_task and run_pipeline_resume_task.
 _running_tasks: dict[str, "asyncio.Task"] = {}
 
+# Serializes watch-folder scans. scan_watch_folder_once is invoked from 3 sites (watch_loop,
+# /api/watch/scan, /api/watch/config) and does a check-then-act (get_job_by_filename -> copy ->
+# save_job); without this lock two concurrent scans of the same new file both pass the existence
+# check and create duplicate jobs (and race on the .part temp file).
+_scan_lock = asyncio.Lock()
+
 async def pipeline_worker():
     while True:
         task_func, args = await job_queue.get()
         job_id = args[0] if args else None
+        t = None
         try:
             t = asyncio.create_task(task_func(*args))
             if job_id:
                 _running_tasks[job_id] = t
             await t
         except asyncio.CancelledError:
-            log.info("worker_task_cancelled", job_id=job_id)
+            # The worker itself is being cancelled (app shutdown). Don't leave the in-flight
+            # job running orphaned: cancel its task and await its own finalizer (which writes
+            # CANCELLED), then re-raise so the worker actually exits instead of swallowing the
+            # cancellation and looping forever.
+            if t is not None and not t.done():
+                t.cancel()
+                try:
+                    await t
+                except BaseException:
+                    pass
+            log.info("worker_shutdown_cancelled", job_id=job_id)
+            raise
         except Exception as e:
             log.error("worker_error", error=str(e))
         finally:
@@ -104,7 +122,15 @@ def _file_is_stable(path: str, settle_seconds: float = 5.0) -> bool:
 
 async def scan_watch_folder_once() -> dict:
     """Scan the configured watch folder, import any new (unprocessed) video into
-    data/input and queue a full auto-process job. Returns what it did."""
+    data/input and queue a full auto-process job. Returns what it did.
+
+    Serialized by _scan_lock so concurrent invocations (watch_loop + the two /api/watch
+    endpoints) can't both import the same new file and create duplicate jobs."""
+    async with _scan_lock:
+        return await _scan_watch_folder_locked()
+
+
+async def _scan_watch_folder_locked() -> dict:
     cfg = get_watch_config()
     result = {"imported": [], "skipped": 0, "enabled": bool(cfg.get("enabled"))}
     folder = (cfg.get("folder") or "").strip()
@@ -115,7 +141,9 @@ async def scan_watch_folder_once() -> dict:
         result["error"] = "folder_not_found"
         return result
     try:
-        entries = sorted(os.listdir(folder))
+        # Offload the directory listing so a slow/large watch folder doesn't block the event loop
+        # (matches list_videos/cleanup_loop).
+        entries = sorted(await asyncio.to_thread(os.listdir, folder))
     except OSError as e:
         log.warning("watch_folder_unreadable", folder=folder, error=str(e))
         result["error"] = "folder_unreadable"
@@ -145,9 +173,10 @@ async def scan_watch_folder_once() -> dict:
                 continue
         if not _file_is_stable(src):
             continue  # still being written; pick it up on the next scan
-        # Atomic import: copy to a temp name then rename, so a crash mid-copy never leaves a
-        # truncated file at dest that a later scan would treat as already-imported.
-        tmp_dest = dest + ".part"
+        # Atomic import: copy to a unique temp name then rename, so a crash mid-copy never leaves
+        # a truncated file at dest that a later scan would treat as already-imported. The uuid
+        # keeps the .part name unique so a concurrent/cross-process scan can't clobber it.
+        tmp_dest = dest + f".{uuid.uuid4().hex}.part"
         try:
             await asyncio.to_thread(shutil.copy2, src, tmp_dest)
             os.replace(tmp_dest, dest)
@@ -319,9 +348,14 @@ async def upload_video(file: UploadFile = File(...)):
                 if total > MAX_SIZE:
                     raise HTTPException(status_code=413, detail="File too large. Maximum size is 500MB.")
                 f.write(chunk)
-    except HTTPException:
+    except Exception:
+        # Any failure mid-write (validation HTTPException, a read/socket error, disk full, ...)
+        # must not leave a partial/corrupt file behind that list_videos would surface.
         if os.path.exists(file_path):
-            os.remove(file_path)  # clean up partial upload
+            try:
+                os.remove(file_path)  # clean up partial upload
+            except OSError:
+                pass
         raise
     return {"filename": safe_name, "message": "Uploaded successfully"}
 
@@ -331,26 +365,30 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
         update_job_status(job_id, "CANCELLED")
         log.info("job_cancelled_before_start", job_id=job_id)
         return
-    update_job_status(job_id, "PROCESSING")
     base_name = os.path.splitext(filename)[0]
 
-    # Read per-job flags saved at queue time
-    job_info = get_job(job_id) or {}
-    phase1_settings = _settings_for_job(job_info)
-
-    job = PipelineJob(
-        job_id=job_id,
-        filename=filename,
-        base_name=base_name,
-        target_language=target_lang,
-        target_style=job_info.get("target_style", "Tiêu chuẩn"),
-        vram_profile=settings.vram_profile,
-        created_at=datetime.utcnow()
-    )
-
     try:
+        # Do the initial PROCESSING write (and per-job setup) inside the try: if it fails, the
+        # except below marks the job FAILED instead of stranding it in QUEUED forever
+        # (fail_stale_jobs only recovers PROCESSING/PROCESSING_PHASE2, not QUEUED).
+        update_job_status(job_id, "PROCESSING")
+
+        # Read per-job flags saved at queue time
+        job_info = get_job(job_id) or {}
+        phase1_settings = _settings_for_job(job_info)
+
+        job = PipelineJob(
+            job_id=job_id,
+            filename=filename,
+            base_name=base_name,
+            target_language=target_lang,
+            target_style=job_info.get("target_style", "Tiêu chuẩn"),
+            vram_profile=settings.vram_profile,
+            created_at=datetime.utcnow()
+        )
+
         results, segments = await run_pipeline_phase1(job, phase1_settings)
-        
+
         critical_stages = {"audio_separate", "transcribe", "translate"}
         success = all(
             results[s].success for s in critical_stages if s in results
@@ -369,6 +407,7 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
                 update_job_status(job_id, "AWAITING_REVIEW", phase1_summary)
         else:
             update_job_status(job_id, "FAILED", phase1_summary)
+            clear_cancel(job_id)
             _cleanup_temp(base_name, settings.data_dir)
 
     except (JobCancelled, asyncio.CancelledError):
@@ -379,6 +418,7 @@ async def run_pipeline_task(job_id: str, filename: str, target_lang: str):
     except Exception as e:
         log.error("pipeline_error", error=str(e))
         update_job_status(job_id, "FAILED", error=str(e))
+        clear_cancel(job_id)
         _cleanup_temp(base_name, settings.data_dir)
 
 
@@ -643,6 +683,7 @@ async def run_pipeline_resume_task(job_id: str):
         final_res["phase2"] = {k: v.summary() for k, v in results.items()}
         
         update_job_status(job_id, "COMPLETED" if success else "FAILED", final_res)
+        clear_cancel(job_id)   # terminal state: drop any cancel flag so the set stays bounded
         _cleanup_temp(job.base_name, settings.data_dir)
     except (JobCancelled, asyncio.CancelledError):
         clear_cancel(job_id)
@@ -652,6 +693,7 @@ async def run_pipeline_resume_task(job_id: str):
     except Exception as e:
         log.error("pipeline_resume_error", error=str(e))
         update_job_status(job_id, "FAILED", error=str(e))
+        clear_cancel(job_id)
         _cleanup_temp(job.base_name, settings.data_dir)
 
 @app.post("/api/jobs/{job_id}/resume")
@@ -688,8 +730,12 @@ async def cancel_job(job_id: str):
         return {"job_id": job_id, "status": "CANCELLING", "cancelled": True}
     # No running task (e.g. AWAITING_REVIEW waiting for the user, or queued-but-not-started).
     # Nothing will ever consume a CANCELLING here, so finalize to CANCELLED right now — otherwise
-    # the job sticks in CANCELLING forever and the UI polls it indefinitely. The cancel flag stays
-    # set so that if a queued task does later run, its start-check also short-circuits to CANCELLED.
+    # the job sticks in CANCELLING forever and the UI polls it indefinitely.
     update_job_status(job_id, "CANCELLED")
+    # Keep the cancel flag ONLY for a still-QUEUED job (its pending task will short-circuit on
+    # it). For any other no-task state (e.g. AWAITING_REVIEW) no task will ever consume the flag,
+    # so discard it now instead of leaking the entry in _cancel_requested forever.
+    if status != "QUEUED":
+        clear_cancel(job_id)
     log.info("cancel_finalized_no_task", job_id=job_id, prev_status=status)
     return {"job_id": job_id, "status": "CANCELLED", "cancelled": True}

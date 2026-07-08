@@ -23,6 +23,25 @@ def _resolve_ffmpeg() -> str:
             return cand
     return "ffmpeg"  # last resort — let subprocess raise a clear FileNotFoundError
 
+def _resolve_ffprobe() -> str:
+    """Resolve the ffprobe binary the same way as _resolve_ffmpeg (env -> PATH -> bundled) so
+    callers never depend on PATH. Mirrors _resolve_ffmpeg's search so both tools resolve to the
+    same bundled build."""
+    env_bin = os.environ.get("FFPROBE_BINARY")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for cand in (
+        os.path.join(project_root, "ffmpeg_extracted", "ffmpeg-master-latest-win64-gpl", "bin", "ffprobe.exe"),
+        os.path.join(project_root, "ffprobe.exe"),
+    ):
+        if os.path.exists(cand):
+            return cand
+    return "ffprobe"  # last resort — let subprocess raise a clear FileNotFoundError
+
 def stretch_audio(input_path: str, output_path: str, target_duration: float) -> None:
     """
     Kéo dãn hoặc nén file âm thanh để đạt được target_duration.

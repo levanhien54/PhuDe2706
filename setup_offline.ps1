@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Video Dubbing System — Offline Setup (Cài đặt không cần Internet)
 # Dành cho máy chủ mới sau khi đã copy file ZIP từ máy cũ.
 # Yêu cầu: Đã cài Python 3.10+, Node.js, FFmpeg, và có thư mục offline_wheels
@@ -6,6 +6,10 @@
 
 $ProjectRoot = $PSScriptRoot
 Set-Location $ProjectRoot
+
+# Render Vietnamese (UTF-8) output correctly under Windows PowerShell 5.1 (this file is saved with
+# a UTF-8 BOM so its Vietnamese string literals also parse correctly).
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }

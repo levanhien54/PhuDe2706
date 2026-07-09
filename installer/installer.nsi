@@ -127,7 +127,10 @@ Section "Uninstall"
   Delete "$INSTDIR\.env"
   Delete "$INSTDIR\icon.ico"
   Delete "$INSTDIR\preflight_check.ps1"
+  Delete "$INSTDIR\hardware_check.ps1"
   Delete "$INSTDIR\Kiem-tra-he-thong.bat"
+  ; preflight writes this on every run (incl. the auto-run at install); remove so RMDir can empty $INSTDIR
+  Delete "$INSTDIR\preflight_report.txt"
 
   ; User data (data\input|output|temp = processed videos) is PRESERVED by default; offer to remove it.
   ${If} ${FileExists} "$INSTDIR\data"

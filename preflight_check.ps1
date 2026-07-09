@@ -3,6 +3,13 @@ $ErrorActionPreference = 'Continue'
 # Render Vietnamese (UTF-8) output correctly under Windows PowerShell 5.1, whose default console
 # encoding garbles diacritics even when the launcher .bat runs `chcp 65001`.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+# Shared, tested hardware-check thresholds — same source of truth as setup_native.ps1
+# (covered by tests\test_hardware_check.ps1). Ships next to this file in the bundle.
+$hwCheck = Join-Path $PSScriptRoot 'hardware_check.ps1'
+if (-not (Test-Path $hwCheck)) { Write-Host "[FAIL] Thiếu hardware_check.ps1 cạnh preflight_check.ps1 — gói cài không đầy đủ." -ForegroundColor Red; exit 1 }
+. $hwCheck
+
 $results = New-Object System.Collections.ArrayList
 function Add-Result($name, $status, $msg) { [void]$results.Add([pscustomobject]@{Name=$name;Status=$status;Msg=$msg}) }
 
@@ -26,13 +33,16 @@ if (-not $smi) {
     if ($line) {
         $p = $line.Split(","); $name = $p[0].Trim(); $drv = $p[1].Trim(); $vram = [int]($p[2].Trim())
         Add-Result "GPU NVIDIA" "PASS" "$name (driver $drv)"
-        try {
-            if ([version]($drv) -lt [version]"452.39") { Add-Result "Driver GPU" "WARN" "Driver $drv có thể quá cũ cho CUDA 11.8 — nên cập nhật ≥ 452.39." }
-            else { Add-Result "Driver GPU" "PASS" "driver $drv" }
-        } catch { Add-Result "Driver GPU" "WARN" "Không đọc được phiên bản driver: $drv" }
-        if ($vram -lt 16000) { Add-Result "VRAM" "FAIL" "$([math]::Round($vram/1024,1)) GB < 16 GB tối thiểu." }
-        elseif ($vram -lt 24000) { Add-Result "VRAM" "PASS" "$([math]::Round($vram/1024,1)) GB — dùng VRAM_PROFILE=16gb." }
-        else { Add-Result "VRAM" "PASS" "$([math]::Round($vram/1024,1)) GB — dùng VRAM_PROFILE=24gb." }
+        switch ((Get-DriverSeverity $drv).Code) {
+            'DRIVER_OLD'        { Add-Result "Driver GPU" "WARN" "Driver $drv có thể quá cũ cho CUDA 11.8 — nên cập nhật ≥ 452.39." }
+            'DRIVER_OK'         { Add-Result "Driver GPU" "PASS" "driver $drv" }
+            'DRIVER_UNREADABLE' { Add-Result "Driver GPU" "WARN" "Không đọc được phiên bản driver: $drv" }
+        }
+        switch ((Get-VramSeverity $vram).Code) {
+            'VRAM_LOW'  { Add-Result "VRAM" "FAIL" "$([math]::Round($vram/1024,1)) GB < 16 GB tối thiểu." }
+            'VRAM_16GB' { Add-Result "VRAM" "PASS" "$([math]::Round($vram/1024,1)) GB — dùng VRAM_PROFILE=16gb." }
+            'VRAM_24GB' { Add-Result "VRAM" "PASS" "$([math]::Round($vram/1024,1)) GB — dùng VRAM_PROFILE=24gb." }
+        }
     } else { Add-Result "GPU NVIDIA" "FAIL" "nvidia-smi không trả dữ liệu." }
 }
 
@@ -40,7 +50,7 @@ if (-not $smi) {
 try {
     $drive = (Get-Item $Root).PSDrive.Name
     $free = (Get-PSDrive $drive).Free
-    if ($free -ge ($diskMin*1GB)) { Add-Result "Dung lượng đĩa" "PASS" ("{0:N0} GB trống trên ổ {1}:" -f ($free/1GB), $drive) }
+    if ((Get-DiskSeverity ($free/1GB) $diskMin).Severity -eq 'PASS') { Add-Result "Dung lượng đĩa" "PASS" ("{0:N0} GB trống trên ổ {1}:" -f ($free/1GB), $drive) }
     else { Add-Result "Dung lượng đĩa" "FAIL" ("Chỉ {0:N0} GB trống trên ổ {1}: — cần ≥ {2} GB." -f ($free/1GB), $drive, $diskMin) }
 } catch { Add-Result "Dung lượng đĩa" "WARN" "Không đọc được dung lượng ổ đĩa." }
 

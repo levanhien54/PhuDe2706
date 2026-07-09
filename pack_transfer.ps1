@@ -126,7 +126,10 @@ foreach ($m in @("demucs","whisper","latentsync","propainter","tts","omnivoice",
 
 # 4. Config & Scripts
 Step "Chep Config, Scripts va Offline Wheels"
+# hardware_check.ps1 is REQUIRED: setup_native.ps1 dot-sources it and hard-exits if missing.
+# preflight_check.ps1 + Kiem-tra-he-thong.bat give the transfer target a system check too.
 $files = @(".env", "icon.ico", "setup_native.ps1", "setup_offline.ps1",
+           "hardware_check.ps1", "preflight_check.ps1", "Kiem-tra-he-thong.bat",
            "run_native.ps1", "pack_offline_bundle.ps1", "pack_transfer.ps1",
            "build-electron.ps1")
 foreach ($f in $files) {

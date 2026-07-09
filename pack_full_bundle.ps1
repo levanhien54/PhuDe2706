@@ -119,7 +119,7 @@ OK "structure ready"
 
 # --- 10. preflight + docs ---
 Step "Preflight + tài liệu"
-foreach ($f in @('preflight_check.ps1','Kiem-tra-he-thong.bat')) {
+foreach ($f in @('preflight_check.ps1','hardware_check.ps1','Kiem-tra-he-thong.bat')) {
     if (Test-Path "$Src\$f") { Copy-Item "$Src\$f" "$Stage\$f" -Force; OK $f }
 }
 if (Test-Path "$Src\HUONG-DAN") { Mirror "$Src\HUONG-DAN" "$Stage\HUONG-DAN"; OK "HUONG-DAN" }

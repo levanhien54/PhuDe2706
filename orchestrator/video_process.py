@@ -34,7 +34,8 @@ def _check_nvenc_cached() -> bool:
             # we use below; fall back to libx264 if it fails.
             res = subprocess.run(
                 [_resolve_ffmpeg(), '-hide_banner', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
-                 '-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-b:v', '5M', '-f', 'null', '-'],
+                 '-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0',
+                 '-f', 'null', '-'],
                 capture_output=True, timeout=25
             )
             _NVENC_AVAILABLE = (res.returncode == 0)
@@ -43,6 +44,16 @@ def _check_nvenc_cached() -> bool:
         except Exception:
             _NVENC_AVAILABLE = False
     return _NVENC_AVAILABLE
+
+
+def _nvenc_or_x264_args(cq: int = 23) -> list[str]:
+    """Lossy H.264 encoder args: constant-quality NVENC on the GPU when a real session can open
+    (h264_nvenc -cq is x264-crf-equivalent and adapts bitrate to content — unlike a fixed -b:v),
+    else libx264 at the same crf. Probe params above match these so the probe validates the real
+    config. Used by the OCR-blur re-encode and the frame writer."""
+    if _check_nvenc_cached():
+        return ['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', str(cq), '-b:v', '0']
+    return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', str(cq)]
 
 # --- Opt 7: Threading lock for OCR singleton (multi-job safety) ---
 _ocr_lock = _threading.Lock()
@@ -826,7 +837,7 @@ def _precise_blur_per_frame(input_path, output_path, fps, width, height,
     enc = subprocess.Popen(
         [_ffmpeg, '-y', '-hide_banner', '-loglevel', 'error',
          '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{width}x{height}', '-r', f'{enc_fps:.6f}',
-         '-i', '-', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+         '-i', '-', '-an', *_nvenc_or_x264_args(23),
          '-pix_fmt', 'yuv420p', output_path],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     enc_err: collections.deque = collections.deque(maxlen=64)
@@ -1195,8 +1206,8 @@ def remove_watermark_from_video(
                 print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 Lossless)")
             else:
                 if codec == 'h264_nvenc':
-                    cmd.extend(['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-b:v', '5M'])
-                    print(f"[VideoProcess] FFmpeg Writer: {path} (h264_nvenc GPU Accelerated)")
+                    cmd.extend(['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0'])
+                    print(f"[VideoProcess] FFmpeg Writer: {path} (h264_nvenc GPU, constant-quality)")
                 else:
                     cmd.extend(['-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast'])
                     print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 CPU, veryfast)")

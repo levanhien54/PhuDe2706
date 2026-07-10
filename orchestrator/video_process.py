@@ -55,6 +55,15 @@ def _nvenc_or_x264_args(cq: int = 23) -> list[str]:
         return ['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', str(cq), '-b:v', '0']
     return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', str(cq)]
 
+
+def _should_precompute_ocr(mask_only: bool, has_dynamic: bool, ocr_mode: str) -> bool:
+    """Whether to run the batched per-frame OCR precompute (ocr_lookup, the dynamic text boxes).
+    The ProPainter mask writer (mask_only) ALWAYS needs it — otherwise the mask holds only static
+    watermark boxes and misses the moving subtitles, so ProPainter inpaints watermarks but leaves
+    the subtitles on screen. The inpaint pipeline needs it only when dynamic text is present; the
+    default "blur" path OCRs each frame itself in _precise_blur_per_frame, so it never precomputes."""
+    return bool(mask_only or (has_dynamic and ocr_mode == "inpaint"))
+
 # --- Opt 7: Threading lock for OCR singleton (multi-job safety) ---
 _ocr_lock = _threading.Lock()
 _ocr_instance = None
@@ -1124,9 +1133,11 @@ def remove_watermark_from_video(
         return
 
     # --- Pre-pass C: OCR batch pre-computation ---
-    # Only the inpaint 4-thread pipeline still consumes ocr_lookup. The default "blur" mode now
-    # uses _precise_blur_per_frame, which OCRs every frame itself, so precompute is skipped there.
-    if not mask_only and has_dynamic and _ocr_mode == "inpaint":
+    # ocr_lookup (dynamic per-frame text boxes) feeds BOTH the inpaint 4-thread pipeline and the
+    # ProPainter mask writer (mask_only). mask_only MUST precompute — otherwise the mask holds only
+    # static watermark boxes and ProPainter leaves the moving subtitles on screen. The default
+    # "blur" mode OCRs each frame itself in _precise_blur_per_frame, so it skips this.
+    if _should_precompute_ocr(mask_only, has_dynamic, _ocr_mode):
         print(f"[VideoProcess] Pre-compute OCR theo batch (batch_size={_ocr_batch_size})...")
         try:
             ocr_lookup = precompute_ocr_results(

@@ -54,7 +54,11 @@ def test_wsola_branch_taken_when_selected(tmp_path, monkeypatch):
     out = tmp_path / "out.wav"
     sf.write(str(inp), y, sr)
 
-    audio_sync.stretch_audio(str(inp), str(out), target_duration=0.5)
+    ret = audio_sync.stretch_audio(str(inp), str(out), target_duration=0.5)
 
     assert out.exists(), "WSOLA path did not write output"
     assert any(isinstance(c, tuple) and c[0] == "wsola" for c in calls), "WSOLA (audiotsm) not invoked"
+    # New contract: returns (audio, sr) so callers skip a redundant re-read of the file.
+    assert isinstance(ret, tuple) and len(ret) == 2
+    data, out_sr = ret
+    assert isinstance(data, np.ndarray) and out_sr == sr

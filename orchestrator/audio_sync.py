@@ -42,7 +42,7 @@ def _resolve_ffprobe() -> str:
             return cand
     return "ffprobe"  # last resort — let subprocess raise a clear FileNotFoundError
 
-def stretch_audio(input_path: str, output_path: str, target_duration: float) -> None:
+def stretch_audio(input_path: str, output_path: str, target_duration: float) -> tuple[np.ndarray, int]:
     """
     Kéo dãn hoặc nén file âm thanh để đạt được target_duration.
 
@@ -50,7 +50,9 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float) -> 
       - "phasevocoder" (mặc định): Pedalboard (lõi Rubberband C++), chất lượng cao.
       - "wsola": WSOLA qua gói `audiotsm` — tự nhiên hơn, ít méo pha; fallback về Pedalboard/librosa
         nếu chưa cài audiotsm.
-    Sau khi kéo dãn, áp Vocal Mastering (Pedalboard) nếu có, cho mọi thuật toán.
+    KHÔNG master per-segment: high-pass/compressor/loudnorm được áp MỘT LẦN trên toàn bộ giọng ở
+    mix_audio_to_video — master 2 lần (per-segment + mux) làm giọng bị nén/pump. Ghi ra output_path
+    VÀ trả về (audio, sr) để caller khỏi phải đọc lại file từ đĩa.
     """
     print(f"[AudioSync] Xử lý file {input_path} -> target: {target_duration}s")
 
@@ -73,7 +75,7 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float) -> 
 
     if current_duration <= 0:
         sf.write(output_path, y, sr)  # honor the output contract (avoid downstream FileNotFoundError)
-        return
+        return np.asarray(y, dtype=np.float32), sr
 
     # Tính tỉ lệ (rate)
     # rate > 1: chạy nhanh hơn (thời lượng ngắn lại)
@@ -119,23 +121,15 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float) -> 
             import librosa
             y_stretched = librosa.effects.time_stretch(y, rate=rate)
 
-    # Vocal Mastering Chain (Làm rõ giọng, nén âm lượng, chống rè) — áp dụng nếu có pedalboard,
-    # cho mọi thuật toán stretch (kể cả WSOLA). Nếu chưa cài pedalboard thì bỏ qua.
-    try:
-        import pedalboard
-        board = pedalboard.Pedalboard([
-            pedalboard.HighpassFilter(cutoff_frequency_hz=80),  # Cắt tiếng lụp bụp ở dải trầm
-            pedalboard.Compressor(threshold_db=-15, ratio=3.0, attack_ms=5.0, release_ms=50.0), # Làm đều âm lượng giọng
-            pedalboard.Limiter(threshold_db=-1.5) # Chống rè (clipping)
-        ])
-        y_stretched = board(np.asarray(y_stretched, dtype='float32').reshape(1, -1), sr)[0]
-        print("[AudioSync] Vocal Mastering applied.")
-    except ImportError:
-        pass
+    # NOTE: mastering (high-pass 80Hz + compressor -15dB/3:1 + loudnorm) is applied ONCE on the full
+    # concatenated voice in mix_audio_to_video. Doing it per-segment here as well double-compressed
+    # the dub (pumping / thinned voice), so it is intentionally NOT applied here.
+    y_stretched = np.asarray(y_stretched, dtype=np.float32)
 
-    # Ghi ra file
+    # Ghi ra file (giữ artifact để debug) và trả mảng để caller khỏi đọc lại từ đĩa.
     sf.write(output_path, y_stretched, sr)
     print(f" - Đã lưu output: {output_path}")
+    return y_stretched, sr
 
 def mix_audio_to_video(video_path: str, new_vocal_path: str, background_path: str,
                        output_video_path: str, bg_denoise: bool = True) -> None:

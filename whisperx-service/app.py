@@ -82,10 +82,51 @@ def _ensure_ffmpeg_on_path():
 
 _ensure_ffmpeg_on_path()
 
+
+def _preload_real_cudnn() -> bool:
+    """cuDNN is OFF by default: PyTorch cu118 ships a stub cudnn64_9.dll (missing cudnnGetLibConfig)
+    that crashes the align/VAD torch conv ops. Opt in with WHISPERX_ENABLE_CUDNN=1: preload a REAL
+    cudnn64_*.dll from the nvidia-cudnn wheel (venv/.../nvidia/cudnn/bin) so torch resolves to it,
+    enabling cuDNN (~1.5-3x faster alignment/VAD). Returns False — stay disabled (unchanged, working
+    behavior) — unless the flag is set AND a real cudnn actually loads."""
+    if os.environ.get("WHISPERX_ENABLE_CUDNN", "0").strip().lower() not in ("1", "true", "yes"):
+        return False
+    nvidia_root = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "venv", "lib", "site-packages", "nvidia")
+    )
+    cudnn_dll = None
+    if os.path.isdir(nvidia_root):
+        for root, _dirs, files in os.walk(nvidia_root):
+            for f in files:
+                if f.lower().startswith("cudnn64_") and f.lower().endswith(".dll"):
+                    cudnn_dll = os.path.join(root, f)
+                    break
+            if cudnn_dll:
+                break
+    if not cudnn_dll:
+        print("[whisperx] WHISPERX_ENABLE_CUDNN=1 but no real cudnn64_*.dll under venv nvidia — "
+              "keeping cuDNN disabled.", file=sys.stderr)
+        return False
+    try:
+        ctypes.WinDLL(cudnn_dll)
+    except OSError as e:
+        print(f"[whisperx] Could not load {cudnn_dll} ({e}) — keeping cuDNN disabled.", file=sys.stderr)
+        return False
+    print(f"[whisperx] cuDNN ENABLED — preloaded real {os.path.basename(cudnn_dll)}.", file=sys.stderr)
+    return True
+
+
+_CUDNN_OK = _preload_real_cudnn()
+
 import torch
-# PyTorch cu118's bundled cudnn64_9.dll is a stub missing cudnnGetLibConfig.
-# Disable cuDNN so pyannote/torch ops fall back to basic CUDA kernels.
-torch.backends.cudnn.enabled = False
+# cuDNN disabled by default (PyTorch cu118's bundled cudnn64_9.dll is a stub missing
+# cudnnGetLibConfig → crashes the conv ops used by align/VAD). Opt in via WHISPERX_ENABLE_CUDNN=1
+# once a real cudnn is present (preloaded above) for ~1.5-3x faster alignment/VAD.
+if _CUDNN_OK:
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.benchmark = True  # autotune conv algos for the repeated align/VAD passes
+else:
+    torch.backends.cudnn.enabled = False
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

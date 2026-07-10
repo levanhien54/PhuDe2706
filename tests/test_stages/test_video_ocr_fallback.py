@@ -90,6 +90,43 @@ def test_no_fallback_when_propainter_succeeds(tmp_path):
     assert os.path.exists(cleaned)
 
 
+def test_ocr_disabled_passthrough_provides_identical_cleaned(tmp_path):
+    # Default path (OCR off): cleaned.mp4 must exist and be byte-identical to the input, whether it
+    # was hardlinked (fast path) or copied (cross-volume fallback).
+    data_dir = tmp_path / "data"
+    (data_dir / "input").mkdir(parents=True)
+    (data_dir / "temp").mkdir(parents=True)
+    (data_dir / "input" / "v.mp4").write_bytes(b"video-bytes-123")
+    settings = Settings(enable_ocr=False, data_dir=str(data_dir), _env_file=None)
+    vram = VRAMManager(settings)
+    job = PipelineJob(job_id="j1", filename="v.mp4", base_name="v")
+
+    result = asyncio.run(video_ocr.run_video_ocr(job, settings, vram))
+
+    cleaned = data_dir / "temp" / "v" / "cleaned.mp4"
+    assert result.success is True
+    assert cleaned.exists()
+    assert cleaned.read_bytes() == b"video-bytes-123"
+
+
+def test_ocr_disabled_passthrough_overwrites_stale_cleaned(tmp_path):
+    # A leftover cleaned.mp4 from a prior run must not make os.link fail (target exists).
+    data_dir = tmp_path / "data"
+    (data_dir / "input").mkdir(parents=True)
+    (data_dir / "temp" / "v").mkdir(parents=True)
+    (data_dir / "input" / "v.mp4").write_bytes(b"fresh")
+    (data_dir / "temp" / "v" / "cleaned.mp4").write_bytes(b"stale-old")
+    settings = Settings(enable_ocr=False, data_dir=str(data_dir), _env_file=None)
+    vram = VRAMManager(settings)
+    job = PipelineJob(job_id="j1", filename="v.mp4", base_name="v")
+
+    result = asyncio.run(video_ocr.run_video_ocr(job, settings, vram))
+
+    cleaned = data_dir / "temp" / "v" / "cleaned.mp4"
+    assert result.success is True
+    assert cleaned.read_bytes() == b"fresh"
+
+
 def test_stage_fails_when_propainter_and_all_fallbacks_fail(tmp_path):
     settings, vram, job, cleaned = _setup(tmp_path)
 

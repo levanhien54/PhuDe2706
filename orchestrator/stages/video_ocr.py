@@ -20,10 +20,19 @@ async def run_video_ocr(
     os.makedirs(temp_dir, exist_ok=True)
     output_video = os.path.join(temp_dir, "cleaned.mp4")
 
-    # When OCR is disabled: pass original video through unchanged
+    # When OCR is disabled: pass original video through unchanged. Hardlink instead of a full byte
+    # copy (input and temp are both under data/, same volume) so cleaned.mp4 is identical for every
+    # downstream reader but costs no disk I/O; fall back to copy across volumes / non-link FS.
     if not settings.enable_ocr:
-        log.info("video_ocr_skip", msg="OCR disabled — copying original as cleaned.mp4")
-        await asyncio.to_thread(shutil.copy2, input_video, output_video)
+        log.info("video_ocr_skip", msg="OCR disabled — linking original as cleaned.mp4")
+        def _provide_cleaned():
+            if os.path.exists(output_video):
+                os.remove(output_video)
+            try:
+                os.link(input_video, output_video)
+            except OSError:
+                shutil.copy2(input_video, output_video)
+        await asyncio.to_thread(_provide_cleaned)
         return StageResult(
             stage="video_ocr",
             success=True,

@@ -134,7 +134,9 @@ def get_ocr_instance():
 
 
 # --- Opt 2: Downscale frame for OCR, scale boxes back ---
-OCR_MAX_H = 480
+# CRAFT detects on frames downscaled to this height. 480 is fast; raise to 720 (env OCR_MAX_H) on a
+# 24GB GPU for better recall on small subtitles/credits (more OCR pixels = slower detection).
+OCR_MAX_H = int(os.environ.get("OCR_MAX_H", "480"))
 
 def _scale_frame_for_ocr(frame):
     h, w = frame.shape[:2]

@@ -88,6 +88,12 @@ if ($env:VRAM_PROFILE -eq "16gb") {
     if ([int]$env:OMNIVOICE_REPLICAS -gt 2) { $env:OMNIVOICE_REPLICAS = "2" }
     if ([int]$env:TTS_CONCURRENCY -gt 2) { $env:TTS_CONCURRENCY = "2" }
 }
+# Heavy OPTIONAL video stages (chỉ khi bật OCR/ProPainter): 24GB xử lý batch OCR lớn hơn + subvideo
+# ProPainter dài hơn (ít pass) => nhanh hơn, KHÔNG đổi chất lượng. 16GB giữ mặc định an toàn.
+if ($env:VRAM_PROFILE -eq "24gb") {
+    if (-not $env:OCR_BATCH) { $env:OCR_BATCH = "48" }
+    if (-not $env:PROPAINTER_SUBVIDEO_LENGTH) { $env:PROPAINTER_SUBVIDEO_LENGTH = "200" }
+}
 
 # Use venv site-packages for imports (avoid shm.dll loader in venv Python)
 $env:PYTHONPATH = "$ProjectRoot\venv\Lib\site-packages;$ProjectRoot\GPT-SoVITS;$ProjectRoot\GPT-SoVITS\GPT_SoVITS"

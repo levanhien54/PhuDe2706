@@ -122,6 +122,7 @@ class LLMClient(BaseClient):
                     "messages": messages,
                     "stream": False,
                     "format": _TRANSLATION_SCHEMA,
+                    "options": {"num_ctx": self.settings.llm_num_ctx, "temperature": 0.2},
                 }
                 result = await self.post_json("/api/chat", payload)
                 raw_out = result.get("message", {}).get("content", "").strip()
@@ -183,7 +184,8 @@ class LLMClient(BaseClient):
                     "model": self.settings.llm_model,
                     "messages": messages,
                     "stream": False,
-                    "format": _TRANSLATION_SCHEMA
+                    "format": _TRANSLATION_SCHEMA,
+                    "options": {"num_ctx": self.settings.llm_num_ctx, "temperature": 0.2},
                 }
                 result = await self.post_json("/api/chat", payload)
                 raw_out = result.get("message", {}).get("content", "").strip()
@@ -286,20 +288,28 @@ class LLMClient(BaseClient):
             result.append(SrtSegment(start=seg.start, end=seg.end, text=seg.text, translated=trans, speaker=seg.speaker))
 
         # Wrong-script guard: qwen occasionally leaks Han/kana into Vietnamese output.
-        # Re-translate the offending line once; strip as a last resort so TTS never speaks garbage.
+        # Re-translate the offending lines once (all in parallel — a long video can leak many
+        # lines, and awaiting them one-by-one was a slow serial tail); strip as a last resort so
+        # TTS never speaks garbage.
         if is_vi:
-            for seg in result:
-                if seg.translated and _has_cjk(seg.translated):
+            leaky = [seg for seg in result if seg.translated and _has_cjk(seg.translated)]
+            if leaky:
+                for seg in leaky:
                     log.warning("translation_cjk_leak", original=seg.text[:40])
-                    # Never let a single repair failure abort the stage — fall back to stripping
-                    # CJK so TTS still gets clean text. (CancelledError is BaseException, so a
-                    # job cancel still propagates through this except Exception.)
-                    try:
-                        fixed = await self._translate_one(seg.text, target_lang, target_style, duration=seg.duration)
-                    except Exception as e:
-                        log.warning("translation_cjk_repair_failed", error=str(e))
+                repaired = await asyncio.gather(
+                    *(self._translate_one(seg.text, target_lang, target_style, duration=seg.duration) for seg in leaky),
+                    return_exceptions=True,
+                )
+                for seg, fixed in zip(leaky, repaired):
+                    if isinstance(fixed, BaseException):
+                        # A job cancel (CancelledError is BaseException, captured here by
+                        # return_exceptions) must still propagate, not be swallowed as a repair miss.
+                        if isinstance(fixed, asyncio.CancelledError):
+                            raise fixed
+                        log.warning("translation_cjk_repair_failed", error=str(fixed))
                         fixed = None
-                    seg.translated = fixed if (fixed and not _has_cjk(fixed)) else _strip_cjk(seg.translated)
+                    # Never let a single repair failure abort the stage — strip CJK as a fallback.
+                    seg.translated = fixed if (isinstance(fixed, str) and fixed and not _has_cjk(fixed)) else _strip_cjk(seg.translated)
 
         log.info("llm_translate_done")
         return result

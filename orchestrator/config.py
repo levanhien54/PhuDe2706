@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # Number of translation chunks sent to the LLM concurrently. Real speedup requires the
     # Ollama server to serve parallel requests (OLLAMA_NUM_PARALLEL>1).
     llm_concurrency: int = Field(4, validation_alias="LLM_CONCURRENCY")
+    # Ollama context window per request. Its default (2048) is too small for a 20-segment batch
+    # (long system prompt + JSON) — overflow truncates the prompt/output and collapses the fast
+    # batched path into slow per-item fallbacks. 8192 fits comfortably on 16-24 GB.
+    llm_num_ctx: int = Field(8192, validation_alias="LLM_NUM_CTX")
     # Gentle background-noise reduction on the separated bg track during the final mux.
     enable_bg_denoise: bool = Field(True, validation_alias="BG_DENOISE")
 

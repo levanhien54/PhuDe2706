@@ -446,17 +446,18 @@ if ($env:TIMESTRETCH_ALGO -eq "wsola") {
     Write-OK "Đã cài audiotsm."
 }
 
-# 4.3 Demucs (tách nhạc/giọng, engine mặc định)
-Write-Step "Tải trước mô hình Demucs (htdemucs_ft)"
+# 4.3 Demucs (tách nhạc/giọng). Tải CẢ htdemucs_ft (mặc định, chất lượng) VÀ htdemucs (1-model)
+# để FAST_MODE (DEMUCS_MODEL=htdemucs) không phải tải lại lúc chạy (hỏng nếu máy đích offline).
+Write-Step "Tải trước mô hình Demucs (htdemucs_ft + htdemucs)"
 if ($IsOffline) {
     Write-Warn "Đang ở chế độ offline — bỏ qua tải Demucs. Model cần có sẵn trong cache torch hub."
 } else {
-    Write-Host "Kích hoạt tải trước mô hình htdemucs_ft..."
-    & $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft')"
+    Write-Host "Kích hoạt tải trước mô hình htdemucs_ft + htdemucs..."
+    & $PythonExe -c "from demucs.pretrained import get_model; get_model('htdemucs_ft'); get_model('htdemucs')"
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Chưa tải được htdemucs_ft. Model sẽ tự tải khi chạy lần đầu (cần mạng lúc đó)."
+        Write-Warn "Chưa tải được model Demucs. Model sẽ tự tải khi chạy lần đầu (cần mạng lúc đó)."
     } else {
-        Write-OK "Đã tải htdemucs_ft."
+        Write-OK "Đã tải Demucs (htdemucs_ft + htdemucs)."
     }
 }
 

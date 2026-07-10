@@ -82,11 +82,20 @@ if (-not $env:LLM_CONCURRENCY) { $env:LLM_CONCURRENCY = "4" }
 if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "4" }
 # WhisperX transcribe batch (turbo ~3GB; a 24GB card handles 64 comfortably -> faster STT).
 if (-not $env:WHISPER_BATCH_SIZE) { $env:WHISPER_BATCH_SIZE = "64" }
-# Safety clamp: a 16GB card cannot hold 4 TTS replicas — keep replicas/concurrency at 2 there
-# (they must stay EQUAL: one replica per in-flight request).
+# Clamp an env var down to $Max when it holds a number above it; leave non-numeric values alone
+# (a raw [int] cast on e.g. "auto" used to abort the whole launcher).
+function Clamp-EnvMax([string]$Name, [int]$Max) {
+    $n = 0
+    if ([int]::TryParse([Environment]::GetEnvironmentVariable($Name), [ref]$n) -and $n -gt $Max) {
+        [Environment]::SetEnvironmentVariable($Name, "$Max")
+    }
+}
+# Safety clamp: a 16GB card cannot hold the 24GB-tuned TTS replicas OR the STT batch — cap them
+# there (replicas/concurrency must stay EQUAL: one replica per in-flight request).
 if ($env:VRAM_PROFILE -eq "16gb") {
-    if ([int]$env:OMNIVOICE_REPLICAS -gt 2) { $env:OMNIVOICE_REPLICAS = "2" }
-    if ([int]$env:TTS_CONCURRENCY -gt 2) { $env:TTS_CONCURRENCY = "2" }
+    Clamp-EnvMax "OMNIVOICE_REPLICAS" 2
+    Clamp-EnvMax "TTS_CONCURRENCY" 2
+    Clamp-EnvMax "WHISPER_BATCH_SIZE" 32
 }
 # Heavy OPTIONAL video stages (chỉ khi bật OCR/ProPainter): 24GB xử lý batch OCR lớn hơn + subvideo
 # ProPainter dài hơn (ít pass) => nhanh hơn, KHÔNG đổi chất lượng. 16GB giữ mặc định an toàn.

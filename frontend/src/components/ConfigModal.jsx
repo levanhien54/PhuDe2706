@@ -14,10 +14,16 @@ const LANGUAGES = [
   { value: '中文', label: 'Tiếng Trung' },
 ];
 
+// Derive the service host from API_BASE so a non-default orchestrator host (VITE_API_URL) is
+// honoured. WhisperX/OmniVoice are co-located with the orchestrator (localhost-only microservices),
+// so they share its host and differ only by port.
+let API_HOST = '127.0.0.1';
+try { API_HOST = new URL(API_BASE).hostname || API_HOST; } catch { /* keep default */ }
+
 const SERVICES = [
   { name: 'Orchestrator', url: `${API_BASE}/api/jobs`, port: 8000 },
-  { name: 'WhisperX STT', url: 'http://127.0.0.1:8001/health', port: 8001 },
-  { name: 'OmniVoice TTS (mặc định)', url: 'http://127.0.0.1:3900/health', port: 3900 },
+  { name: 'WhisperX STT', url: `http://${API_HOST}:8001/health`, port: 8001 },
+  { name: 'OmniVoice TTS (mặc định)', url: `http://${API_HOST}:3900/health`, port: 3900 },
 ];
 
 export default function ConfigModal({ defaultLang, defaultStyle = 'Tiêu chuẩn', defaultLipSync, defaultOCR = false, defaultOCRMode = 'blur', onSave, onClose }) {

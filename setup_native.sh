@@ -85,20 +85,48 @@ if [ ! -f "models/propainter/inference_propainter.py" ]; then
 fi
 
 echo "Kích hoạt tải trọng số ProPainter (Khoảng 2GB)..."
-"$PYTHON_EXE" -c "
-import os, urllib.request
+# Download to a .part temp + atomic os.replace + size-check, and exit non-zero on failure
+# (mirror setup_native.ps1). urlretrieve straight to the final path with a swallowed exception
+# left truncated weights behind that every later run blindly skipped, yet still printed OK.
+if ! "$PYTHON_EXE" -c "
+import os, sys, urllib.request
+
 def dl(url, path):
-    if not os.path.exists(path):
-        print(f'Downloading {os.path.basename(path)}...')
-        try: urllib.request.urlretrieve(url, path)
-        except Exception as e: print(f'Lỗi khi tải {path}: {e}')
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return
+    tmp = path + '.part'
+    print(f'Downloading {os.path.basename(path)}...')
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        if os.path.getsize(tmp) == 0:
+            raise IOError('file rỗng sau khi tải')
+        os.replace(tmp, path)
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        print(f'Lỗi khi tải {os.path.basename(path)}: {e}', file=sys.stderr)
+        raise
+
 weights_dir = os.path.join('models', 'propainter', 'weights')
 os.makedirs(weights_dir, exist_ok=True)
-dl('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth', os.path.join(weights_dir, 'ProPainter.pth'))
-dl('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth', os.path.join(weights_dir, 'raft-things.pth'))
-dl('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/i3d_rgb_imagenet.pt', os.path.join(weights_dir, 'i3d_rgb_imagenet.pt'))
-"
-echo -e "  \033[1;32m[OK] Đã kiểm tra weights ProPainter.\033[0m"
+downloads = [
+    ('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth', os.path.join(weights_dir, 'ProPainter.pth')),
+    ('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth', os.path.join(weights_dir, 'raft-things.pth')),
+    ('https://github.com/sczhou/ProPainter/releases/download/v0.1.0/i3d_rgb_imagenet.pt', os.path.join(weights_dir, 'i3d_rgb_imagenet.pt')),
+]
+failed = False
+for url, path in downloads:
+    try:
+        dl(url, path)
+    except Exception:
+        failed = True
+if failed:
+    sys.exit(1)
+"; then
+    echo -e "  \033[1;33m[!!] Tải một số trọng số ProPainter thất bại. ProPainter có thể không hoạt động; chạy lại setup để thử lại.\033[0m"
+else
+    echo -e "  \033[1;32m[OK] Đã kiểm tra weights ProPainter.\033[0m"
+fi
 
 if [ ! -f "$PROJECT_ROOT/models/latentsync/scripts/inference.py" ]; then
     step "Đang tải mã nguồn LatentSync (Lip-Sync)..."

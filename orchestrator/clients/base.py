@@ -1,11 +1,24 @@
 import asyncio
 import mimetypes
 import os
+import random
 import httpx
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
+
+# Hard ceiling (seconds) for a GPU child subprocess (separation / lip-sync / inpaint) so a
+# wedged process can't hang the worker forever. Large default (1h) covers slow HD jobs;
+# override with GPU_SUBPROCESS_TIMEOUT_SEC. Read at call time so tests/env can adjust it.
+_DEFAULT_GPU_SUBPROCESS_TIMEOUT = 3600.0
+
+
+def gpu_subprocess_timeout() -> float:
+    try:
+        return float(os.environ.get("GPU_SUBPROCESS_TIMEOUT_SEC", _DEFAULT_GPU_SUBPROCESS_TIMEOUT))
+    except (TypeError, ValueError):
+        return _DEFAULT_GPU_SUBPROCESS_TIMEOUT
 
 
 def _guess_mime(path: str) -> str:
@@ -37,14 +50,23 @@ class BaseClient:
         for attempt in range(self.settings.http_retries):
             try:
                 return await do()
-            except (httpx.ConnectError, httpx.TimeoutException) as e:
+            except (
+                httpx.ConnectError,
+                httpx.TimeoutException,
+                httpx.RemoteProtocolError,
+                httpx.ReadError,
+            ) as e:
+                # RemoteProtocolError/ReadError: the server dropped the connection mid-response.
+                # That is transient (like a connect/timeout failure), so retry rather than abort.
                 last_exc = e
             except httpx.HTTPStatusError as e:
                 if e.response.status_code < 500:
                     raise  # 4xx: don't retry, propagate immediately
                 last_exc = e
-            wait = 2 ** attempt
-            log.warning("http_retry", attempt=attempt + 1, url=url, error=str(last_exc), wait=wait)
+            if attempt >= self.settings.http_retries - 1:
+                break  # don't sleep after the final attempt — we're about to raise
+            wait = (2 ** attempt) + random.uniform(0, 0.5)  # jitter to avoid synchronized retries
+            log.warning("http_retry", attempt=attempt + 1, url=url, error=str(last_exc), wait=round(wait, 3))
             await asyncio.sleep(wait)
         raise ServiceUnavailableError(f"Failed after {self.settings.http_retries} retries: {last_exc}")
 

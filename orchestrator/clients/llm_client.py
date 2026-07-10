@@ -75,9 +75,20 @@ def _word_budget(duration: float) -> int:
     return max(2, round((duration or 0) * _WORDS_PER_SEC))
 
 
+_LLM_BACKENDS = ("vllm", "ollama")
+
+
 class LLMClient(BaseClient):
     def __init__(self, settings: Settings):
-        base_url = settings.vllm_host if settings.llm_backend == "vllm" else settings.ollama_host
+        # Normalize case and reject unknown backends loudly — a typo (e.g. "vLLM") must not
+        # silently route to Ollama.
+        backend = (settings.llm_backend or "").strip().lower()
+        if backend not in _LLM_BACKENDS:
+            raise ValueError(
+                f"Unknown LLM_BACKEND {settings.llm_backend!r} (expected one of {_LLM_BACKENDS})"
+            )
+        self.backend = backend
+        base_url = settings.vllm_host if backend == "vllm" else settings.ollama_host
         super().__init__(base_url, settings)
         self.settings = settings
 
@@ -96,7 +107,7 @@ class LLMClient(BaseClient):
             {"role": "user", "content": user_prompt},
         ]
         async with _get_sem():
-            if self.settings.llm_backend == "vllm":
+            if self.backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,
                     "messages": messages,
@@ -111,6 +122,7 @@ class LLMClient(BaseClient):
                     "messages": messages,
                     "stream": False,
                     "format": _TRANSLATION_SCHEMA,
+                    "options": {"num_ctx": self.settings.llm_num_ctx, "temperature": 0.2},
                 }
                 result = await self.post_json("/api/chat", payload)
                 raw_out = result.get("message", {}).get("content", "").strip()
@@ -158,7 +170,7 @@ class LLMClient(BaseClient):
         ]
 
         try:
-            if self.settings.llm_backend == "vllm":
+            if self.backend == "vllm":
                 payload = {
                     "model": self.settings.llm_model,
                     "messages": messages,
@@ -172,7 +184,8 @@ class LLMClient(BaseClient):
                     "model": self.settings.llm_model,
                     "messages": messages,
                     "stream": False,
-                    "format": _TRANSLATION_SCHEMA
+                    "format": _TRANSLATION_SCHEMA,
+                    "options": {"num_ctx": self.settings.llm_num_ctx, "temperature": 0.2},
                 }
                 result = await self.post_json("/api/chat", payload)
                 raw_out = result.get("message", {}).get("content", "").strip()
@@ -189,13 +202,30 @@ class LLMClient(BaseClient):
 
             # Coerce id to int — the model may return ids as strings, which would make
             # the int-based `missing` lookup below treat every item as missing.
+            translated_items = [
+                item for item in parsed
+                if isinstance(item, dict) and item.get("translated")
+            ]
             parsed_dict = {}
-            for item in parsed:
-                if isinstance(item, dict) and "id" in item and item.get("translated"):
+            for item in translated_items:
+                if "id" in item:
                     try:
                         parsed_dict[int(item["id"])] = item["translated"]
                     except (ValueError, TypeError):
                         continue
+
+            # Don't trust the model's ids blindly. If it renumbered the batch (e.g. returned
+            # 1-based ids, or reordered them) the id set won't match the expected {0..N-1}. When
+            # we still got exactly N translated items, positional order is far more reliable than
+            # the model's ids — otherwise a 1-based reply would silently shift every line by one.
+            expected_ids = set(range(len(chunk)))
+            if set(parsed_dict.keys()) != expected_ids and len(translated_items) == len(chunk):
+                log.warning(
+                    "batch_translation_id_mismatch",
+                    returned=sorted(parsed_dict.keys()), expected_n=len(chunk),
+                )
+                parsed_dict = {i: translated_items[i]["translated"] for i in range(len(chunk))}
+
             missing = [i for i in range(len(chunk)) if i not in parsed_dict]
             if missing:
                 # The batch JSON dropped some items (common with long segments). Don't silently
@@ -258,20 +288,28 @@ class LLMClient(BaseClient):
             result.append(SrtSegment(start=seg.start, end=seg.end, text=seg.text, translated=trans, speaker=seg.speaker))
 
         # Wrong-script guard: qwen occasionally leaks Han/kana into Vietnamese output.
-        # Re-translate the offending line once; strip as a last resort so TTS never speaks garbage.
+        # Re-translate the offending lines once (all in parallel — a long video can leak many
+        # lines, and awaiting them one-by-one was a slow serial tail); strip as a last resort so
+        # TTS never speaks garbage.
         if is_vi:
-            for seg in result:
-                if seg.translated and _has_cjk(seg.translated):
+            leaky = [seg for seg in result if seg.translated and _has_cjk(seg.translated)]
+            if leaky:
+                for seg in leaky:
                     log.warning("translation_cjk_leak", original=seg.text[:40])
-                    # Never let a single repair failure abort the stage — fall back to stripping
-                    # CJK so TTS still gets clean text. (CancelledError is BaseException, so a
-                    # job cancel still propagates through this except Exception.)
-                    try:
-                        fixed = await self._translate_one(seg.text, target_lang, target_style, duration=seg.duration)
-                    except Exception as e:
-                        log.warning("translation_cjk_repair_failed", error=str(e))
+                repaired = await asyncio.gather(
+                    *(self._translate_one(seg.text, target_lang, target_style, duration=seg.duration) for seg in leaky),
+                    return_exceptions=True,
+                )
+                for seg, fixed in zip(leaky, repaired):
+                    if isinstance(fixed, BaseException):
+                        # A job cancel (CancelledError is BaseException, captured here by
+                        # return_exceptions) must still propagate, not be swallowed as a repair miss.
+                        if isinstance(fixed, asyncio.CancelledError):
+                            raise fixed
+                        log.warning("translation_cjk_repair_failed", error=str(fixed))
                         fixed = None
-                    seg.translated = fixed if (fixed and not _has_cjk(fixed)) else _strip_cjk(seg.translated)
+                    # Never let a single repair failure abort the stage — strip CJK as a fallback.
+                    seg.translated = fixed if (isinstance(fixed, str) and fixed and not _has_cjk(fixed)) else _strip_cjk(seg.translated)
 
         log.info("llm_translate_done")
         return result

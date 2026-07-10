@@ -171,10 +171,11 @@ async def run_synthesize(
                         language=job.target_language,
                     )
                     stretched_path = os.path.join(temp_dir, f"seg_{i:04d}_stretched.wav")
-                    await asyncio.to_thread(stretch_audio, seg_output, stretched_path, seg.duration)
-                    # Capture the ACTUAL sample rate of the synthesized audio (e.g. OmniVoice=24000),
-                    # not the source vocal rate — otherwise timeline math + output header desync (wrong speed/pitch).
-                    seg_data, seg_sr = await asyncio.to_thread(sf.read, stretched_path, dtype="float32")
+                    # stretch_audio writes the file AND returns (audio, sr) — use the returned array
+                    # directly instead of a redundant re-read. sr is the synthesized audio's ACTUAL
+                    # rate (e.g. OmniVoice=24000), not the source vocal rate, so timeline math + the
+                    # output header stay in sync.
+                    seg_data, seg_sr = await asyncio.to_thread(stretch_audio, seg_output, stretched_path, seg.duration)
                     return (i, seg, seg_data, seg_sr)
 
             tasks = [_synth_seg(i, seg) for i, seg in enumerate(segments)]

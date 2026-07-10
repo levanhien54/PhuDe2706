@@ -38,11 +38,22 @@ def _to_lang_code(lang: str) -> str:
     return code
 
 
+_TTS_ENGINES = ("omnivoice", "gpt_sovits")
+
+
 class TTSClient(BaseClient):
     """Unified TTS client. Routes to omnivoice or gpt_sovits based on settings.tts_engine."""
 
     def __init__(self, settings: Settings):
-        if settings.tts_engine == "omnivoice":
+        # Normalize case and reject unknown engines loudly — silently falling back to gpt_sovits
+        # on a typo (e.g. "OmniVoice") would dub with the wrong backend.
+        engine = (settings.tts_engine or "").strip().lower()
+        if engine not in _TTS_ENGINES:
+            raise ValueError(
+                f"Unknown TTS_ENGINE {settings.tts_engine!r} (expected one of {_TTS_ENGINES})"
+            )
+        self.engine = engine
+        if engine == "omnivoice":
             super().__init__(settings.omnivoice_api, settings)
         else:
             super().__init__(settings.tts_api, settings)
@@ -57,13 +68,13 @@ class TTSClient(BaseClient):
         language: str = "vi",
         ref_text: str | None = None,
     ) -> str:
-        log.info("tts_synthesize", engine=self.settings.tts_engine, text_len=len(text))
+        log.info("tts_synthesize", engine=self.engine, text_len=len(text))
         lang_code = _to_lang_code(language)
         # Expand numbers / %, acronyms (AI -> "ây ai"), loanwords so the TTS reads them
         # correctly instead of spelling digits or mis-reading "AI" as the word "ai".
         text = normalize_for_tts(text, lang_code)
 
-        if self.settings.tts_engine == "omnivoice":
+        if self.engine == "omnivoice":
             payload = {
                 "text": text,
                 "language": lang_code,

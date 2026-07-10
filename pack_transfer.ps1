@@ -14,6 +14,18 @@ function OK($msg)    { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Info($msg)  { Write-Host "  [..] $msg" -ForegroundColor Gray }
 function Warn($msg)  { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
 
+# robocopy mirror helper: robocopy exit codes 0-7 mean success (bits: 1=copied, 2=extra),
+# >=8 means at least one file/dir failed. Bare robocopy calls always "print OK" regardless, so a
+# real failure would ship an incomplete transfer silently -- route every copy through this and
+# throw (aborts under ErrorActionPreference='Stop') when robocopy signals a real failure.
+function Mirror($from, $to, [string[]]$xd = @(), [string[]]$xf = @()) {
+    $roboArgs = @($from, $to, '/MIR', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP')
+    if ($xd.Count) { $roboArgs += '/XD'; $roboArgs += $xd }
+    if ($xf.Count) { $roboArgs += '/XF'; $roboArgs += $xf }
+    robocopy @roboArgs | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy that bai ($from -> $to), code $LASTEXITCODE" }
+}
+
 Write-Host "============================================================" -ForegroundColor Magenta
 Write-Host "  Video Dubbing -- Pack Transfer" -ForegroundColor Magenta
 Write-Host "  Nguon : $Src" -ForegroundColor Magenta
@@ -37,7 +49,7 @@ if (Test-Path $exeSrc) {
 Step "Chep Source Code Python"
 foreach ($svc in @("orchestrator", "whisperx-service", "tts-service", "omnivoice-service", "electron")) {
     if (Test-Path "$Src\$svc") {
-        robocopy "$Src\$svc" "$Dest\$svc" /MIR /XD __pycache__ .pytest_cache /XF "*.pyc" "*.pyo" /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+        Mirror "$Src\$svc" "$Dest\$svc" @('__pycache__', '.pytest_cache') @('*.pyc', '*.pyo')
         OK $svc
     }
 }
@@ -45,14 +57,14 @@ foreach ($svc in @("orchestrator", "whisperx-service", "tts-service", "omnivoice
 # 2b. Frontend (cần cho setup_offline 'npm install' + frontend/dist mà EXE nạp). Bỏ node_modules.
 Step "Chep Frontend"
 if (Test-Path "$Src\frontend") {
-    robocopy "$Src\frontend" "$Dest\frontend" /MIR /XD node_modules /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+    Mirror "$Src\frontend" "$Dest\frontend" @('node_modules')
     OK "frontend"
 }
 
 # 2c. GPT-SoVITS (code cho engine TTS thay thế gpt_sovits; bỏ qua nếu không dùng). Có thể rất lớn.
 Step "Chep GPT-SoVITS (engine TTS thay thế, tùy chọn)"
 if (Test-Path "$Src\GPT-SoVITS") {
-    robocopy "$Src\GPT-SoVITS" "$Dest\GPT-SoVITS" /MIR /XD __pycache__ .git /XF "*.pyc" "*.pyo" /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+    Mirror "$Src\GPT-SoVITS" "$Dest\GPT-SoVITS" @('__pycache__', '.git') @('*.pyc', '*.pyo')
     OK "GPT-SoVITS"
 } else {
     Info "Khong co GPT-SoVITS (bo qua - dung omnivoice lam engine mac dinh)"
@@ -61,7 +73,7 @@ if (Test-Path "$Src\GPT-SoVITS") {
 # 2d. Voices -- preset narrator-voice library (clip tham chieu clone theo quoc gia)
 Step "Chep thu vien giong doc (voices)"
 if (Test-Path "$Src\voices") {
-    robocopy "$Src\voices" "$Dest\voices" /MIR /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+    Mirror "$Src\voices" "$Dest\voices"
     OK "voices"
 }
 
@@ -69,7 +81,7 @@ if (Test-Path "$Src\voices") {
 Step "Chep Models Ollama - co the mat vai phut"
 $ollamaLocal = "$env:USERPROFILE\.ollama\models"
 if (Test-Path "$Src\models\ollama") {
-    robocopy "$Src\models\ollama" "$Dest\models\ollama" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    Mirror "$Src\models\ollama" "$Dest\models\ollama"
     $sz = (Get-ChildItem "$Src\models\ollama" -Recurse -File | Measure-Object Length -Sum).Sum
     OK ("models\ollama  ({0:N1} GB)" -f ($sz/1GB))
 } elseif (Test-Path $ollamaLocal) {
@@ -77,7 +89,7 @@ if (Test-Path "$Src\models\ollama") {
     # ~/.ollama/models IS the store (contains blobs/ + manifests/), and run_native.ps1 sets
     # OLLAMA_MODELS to ...\models\ollama\models, so copy one level deeper than the primary
     # branch (which mirrors the whole models\ollama tree that already includes the inner models\).
-    robocopy $ollamaLocal "$Dest\models\ollama\models" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    Mirror $ollamaLocal "$Dest\models\ollama\models"
     $sz = (Get-ChildItem $ollamaLocal -Recurse -File | Measure-Object Length -Sum).Sum
     OK ("models\ollama  ({0:N1} GB)" -f ($sz/1GB))
 } else {
@@ -87,12 +99,12 @@ if (Test-Path "$Src\models\ollama") {
 Step "Chep Models HuggingFace (Whisper/TTS) - co the mat vai phut"
 $hfLocal = "$env:USERPROFILE\.cache\huggingface\hub"
 if (Test-Path "$Src\models\huggingface") {
-    robocopy "$Src\models\huggingface" "$Dest\models\huggingface" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    Mirror "$Src\models\huggingface" "$Dest\models\huggingface"
     $sz = (Get-ChildItem "$Src\models\huggingface" -Recurse -File | Measure-Object Length -Sum).Sum
     OK ("models\huggingface  ({0:N1} GB)" -f ($sz/1GB))
 } elseif (Test-Path $hfLocal) {
     Info "Dang chep model tu $hfLocal vao package..."
-    robocopy $hfLocal "$Dest\models\huggingface" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    Mirror $hfLocal "$Dest\models\huggingface"
     $sz = (Get-ChildItem $hfLocal -Recurse -File | Measure-Object Length -Sum).Sum
     OK ("models\huggingface  ({0:N1} GB)" -f ($sz/1GB))
 } else {
@@ -106,7 +118,7 @@ foreach ($m in @("demucs","whisper","latentsync","propainter","tts","omnivoice",
     if (Test-Path $mp) {
         $sz = (Get-ChildItem $mp -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
         if ($sz -gt 0) {
-            robocopy $mp "$Dest\models\$m" /MIR /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+            Mirror $mp "$Dest\models\$m"
             OK ("models\$m  ({0:N0} MB)" -f ($sz/1MB))
         }
     }
@@ -114,7 +126,10 @@ foreach ($m in @("demucs","whisper","latentsync","propainter","tts","omnivoice",
 
 # 4. Config & Scripts
 Step "Chep Config, Scripts va Offline Wheels"
+# hardware_check.ps1 is REQUIRED: setup_native.ps1 dot-sources it and hard-exits if missing.
+# preflight_check.ps1 + Kiem-tra-he-thong.bat give the transfer target a system check too.
 $files = @(".env", "icon.ico", "setup_native.ps1", "setup_offline.ps1",
+           "hardware_check.ps1", "preflight_check.ps1", "Kiem-tra-he-thong.bat",
            "run_native.ps1", "pack_offline_bundle.ps1", "pack_transfer.ps1",
            "build-electron.ps1")
 foreach ($f in $files) {
@@ -125,7 +140,7 @@ foreach ($f in $files) {
 }
 
 if (Test-Path "$Src\offline_wheels") {
-    robocopy "$Src\offline_wheels" "$Dest\offline_wheels" /MIR /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    Mirror "$Src\offline_wheels" "$Dest\offline_wheels"
     OK "offline_wheels"
 } else {
     Warn "Khong co offline_wheels! Moi chay .\pack_offline_bundle.ps1 truoc de dam bao may dich co the cai dat offline."

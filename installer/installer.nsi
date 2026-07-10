@@ -75,6 +75,7 @@ Section "Install"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\icon.ico"
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXENAME}" "" "$INSTDIR\icon.ico"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\Kiem tra he thong.lnk" "$INSTDIR\Kiem-tra-he-thong.bat" "" "$INSTDIR\icon.ico"
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall ${APPNAME}.lnk" "$INSTDIR\Uninstall.exe"
 
   ; uninstaller + Add/Remove Programs (per-user / HKCU)
@@ -93,12 +94,55 @@ Section "Install"
   WriteRegDWORD HKCU "${ARPKEY}" "EstimatedSize" $2
 
   DetailPrint "Hoan tat. Mo bang shortcut '${APPNAME}' tren Desktop."
+
+  ; auto-run preflight so the user sees the system-check report right away
+  ${If} ${FileExists} "$INSTDIR\Kiem-tra-he-thong.bat"
+    ExecShell "open" "$INSTDIR\Kiem-tra-he-thong.bat"
+  ${EndIf}
 SectionEnd
 
 ; ---------------------------------------------------------------------------
 Section "Uninstall"
   Delete "$DESKTOP\${APPNAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APPNAME}"
-  RMDir /r "$INSTDIR"
+
+  ; Remove ONLY the known payload (the exact set pack_full_bundle.ps1 stages). Never
+  ; `RMDir /r "$INSTDIR"` blindly: if the user installed into an existing folder (e.g. their
+  ; Documents root) that would wipe their unrelated files, and it also nukes data\output.
+  RMDir /r "$INSTDIR\frontend"
+  RMDir /r "$INSTDIR\orchestrator"
+  RMDir /r "$INSTDIR\whisperx-service"
+  RMDir /r "$INSTDIR\tts-service"
+  RMDir /r "$INSTDIR\omnivoice-service"
+  RMDir /r "$INSTDIR\GPT-SoVITS"
+  RMDir /r "$INSTDIR\venv"
+  RMDir /r "$INSTDIR\python-runtime"
+  RMDir /r "$INSTDIR\ffmpeg_extracted"
+  RMDir /r "$INSTDIR\ollama"
+  RMDir /r "$INSTDIR\models"
+  RMDir /r "$INSTDIR\voices"
+  RMDir /r "$INSTDIR\HUONG-DAN"
+  Delete "$INSTDIR\${EXENAME}"
+  Delete "$INSTDIR\ffmpeg.exe"
+  Delete "$INSTDIR\.env"
+  Delete "$INSTDIR\icon.ico"
+  Delete "$INSTDIR\preflight_check.ps1"
+  Delete "$INSTDIR\hardware_check.ps1"
+  Delete "$INSTDIR\Kiem-tra-he-thong.bat"
+  ; preflight writes this on every run (incl. the auto-run at install); remove so RMDir can empty $INSTDIR
+  Delete "$INSTDIR\preflight_report.txt"
+
+  ; User data (data\input|output|temp = processed videos) is PRESERVED by default; offer to remove it.
+  ${If} ${FileExists} "$INSTDIR\data"
+    MessageBox MB_YESNO|MB_ICONQUESTION "Xoa luon du lieu trong '$INSTDIR\data' (video input/output da xu ly)?$\r$\nChon No de giu lai." IDNO SkipData
+    RMDir /r "$INSTDIR\data"
+    SkipData:
+  ${EndIf}
+
+  ; Remove the uninstaller + install dir LAST. RMDir (no /r) only deletes $INSTDIR when it is
+  ; empty, so preserved data\ or a user-chosen non-empty root is never wiped.
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
+
   DeleteRegKey HKCU "${ARPKEY}"
 SectionEnd

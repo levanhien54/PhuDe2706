@@ -35,6 +35,12 @@ def get_voice_ref(voice_id: str):
         return None
     for v in _manifest():
         if v.get("id") == voice_id:
-            path = os.path.join(_VOICES_DIR, v.get("file", ""))
+            f = v.get("file")
+            if not f:
+                # A manifest entry without a "file" must resolve to None: os.path.join(dir, "")
+                # yields the voices dir itself, which exists → would wrongly return the DIRECTORY
+                # as if it were a reference wav.
+                return None
+            path = os.path.join(_VOICES_DIR, f)
             return (path, v.get("ref_text") or None) if os.path.exists(path) else None
     return None

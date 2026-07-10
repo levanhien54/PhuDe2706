@@ -61,16 +61,48 @@ if (-not $env:LLM_BACKEND) { $env:LLM_BACKEND = "ollama" }
 if (-not $env:LLM_MODEL) { $env:LLM_MODEL = "qwen2.5:14b" }
 if (-not $env:DATA_DIR) { $env:DATA_DIR = "$ProjectRoot\data" }
 if (-not $env:VRAM_PROFILE) { $env:VRAM_PROFILE = "24gb" }
-# TTS parallelism: OmniVoice loads this many model replicas; orchestrator dispatches
-# the same number of concurrent requests. STT/LLM are unloaded before phase-2 to free VRAM.
-if (-not $env:OMNIVOICE_REPLICAS) { $env:OMNIVOICE_REPLICAS = "2" }
-if (-not $env:TTS_CONCURRENCY) { $env:TTS_CONCURRENCY = "2" }
+# FAST_MODE=1: ưu tiên TỐC ĐỘ — hạ OmniVoice num_step (32, TTS nhanh ~2x) và dùng Demucs 1-model
+# (htdemucs, tách nhạc nhanh ~4x). Mặc định (tắt) giữ CHẤT LƯỢNG cao. Giá trị đặt tường minh
+# (OMNIVOICE_NUM_STEP / DEMUCS_MODEL) vẫn được tôn trọng, không bị FAST_MODE ghi đè.
+if ($env:FAST_MODE -eq "1" -or $env:FAST_MODE -eq "true") {
+    if (-not $env:OMNIVOICE_NUM_STEP) { $env:OMNIVOICE_NUM_STEP = "32" }
+    if (-not $env:DEMUCS_MODEL) { $env:DEMUCS_MODEL = "htdemucs" }
+    Write-Host "  [FAST_MODE] num_step=32, demucs=htdemucs (ưu tiên tốc độ, chất lượng giảm nhẹ)" -ForegroundColor Yellow
+}
+# TTS parallelism: OmniVoice loads this many model replicas; orchestrator dispatches the same
+# number of concurrent requests. STT/LLM are unloaded before phase-2 so the whole GPU is free —
+# 24GB fits 4 replicas (~3GB each) for ~2x TTS throughput; 16GB is clamped to 2 below.
+if (-not $env:OMNIVOICE_REPLICAS) { $env:OMNIVOICE_REPLICAS = "4" }
+if (-not $env:TTS_CONCURRENCY) { $env:TTS_CONCURRENCY = "4" }
 # OmniVoice quality: num_step (cao hơn = phát âm tự nhiên hơn; 64 vẫn ~20x realtime) + CFG scale.
 if (-not $env:OMNIVOICE_NUM_STEP) { $env:OMNIVOICE_NUM_STEP = "64" }  # base model: higher = better quality
 if (-not $env:OMNIVOICE_GUIDANCE) { $env:OMNIVOICE_GUIDANCE = "2.0" }
 # Translation parallelism (client) + Ollama parallel slots (server, inherited by `ollama serve`).
 if (-not $env:LLM_CONCURRENCY) { $env:LLM_CONCURRENCY = "4" }
-if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "2" }
+if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "4" }
+# WhisperX transcribe batch (turbo ~3GB; a 24GB card handles 64 comfortably -> faster STT).
+if (-not $env:WHISPER_BATCH_SIZE) { $env:WHISPER_BATCH_SIZE = "64" }
+# Clamp an env var down to $Max when it holds a number above it; leave non-numeric values alone
+# (a raw [int] cast on e.g. "auto" used to abort the whole launcher).
+function Clamp-EnvMax([string]$Name, [int]$Max) {
+    $n = 0
+    if ([int]::TryParse([Environment]::GetEnvironmentVariable($Name), [ref]$n) -and $n -gt $Max) {
+        [Environment]::SetEnvironmentVariable($Name, "$Max")
+    }
+}
+# Safety clamp: a 16GB card cannot hold the 24GB-tuned TTS replicas OR the STT batch — cap them
+# there (replicas/concurrency must stay EQUAL: one replica per in-flight request).
+if ($env:VRAM_PROFILE -eq "16gb") {
+    Clamp-EnvMax "OMNIVOICE_REPLICAS" 2
+    Clamp-EnvMax "TTS_CONCURRENCY" 2
+    Clamp-EnvMax "WHISPER_BATCH_SIZE" 32
+}
+# Heavy OPTIONAL video stages (chỉ khi bật OCR/ProPainter): 24GB xử lý batch OCR lớn hơn + subvideo
+# ProPainter dài hơn (ít pass) => nhanh hơn, KHÔNG đổi chất lượng. 16GB giữ mặc định an toàn.
+if ($env:VRAM_PROFILE -eq "24gb") {
+    if (-not $env:OCR_BATCH) { $env:OCR_BATCH = "48" }
+    if (-not $env:PROPAINTER_SUBVIDEO_LENGTH) { $env:PROPAINTER_SUBVIDEO_LENGTH = "200" }
+}
 
 # Use venv site-packages for imports (avoid shm.dll loader in venv Python)
 $env:PYTHONPATH = "$ProjectRoot\venv\Lib\site-packages;$ProjectRoot\GPT-SoVITS;$ProjectRoot\GPT-SoVITS\GPT_SoVITS"
@@ -113,20 +145,42 @@ Start-Process -FilePath $PythonExe -ArgumentList "-m uvicorn orchestrator.api:ap
 
 # 4. Start vLLM (nếu dùng vllm)
 if ($env:LLM_BACKEND -eq "vllm") {
-    Write-Host "  -> Đang bật vLLM Server (Port 8080) với model $($env:LLM_MODEL)..."
-    Start-Process -FilePath $PythonExe -ArgumentList "-m vllm.entrypoints.openai.api_server --model $($env:LLM_MODEL) --port 8080" -WorkingDirectory "$ProjectRoot" -WindowStyle Minimized
+    $vllmArgs = "-m vllm.entrypoints.openai.api_server --model $($env:LLM_MODEL) --port 8080"
+    if ($env:LLM_QUANTIZATION) { $vllmArgs += " --quantization $($env:LLM_QUANTIZATION)" }
+    if ($env:ENABLE_CPU_OFFLOAD -eq "true" -or $env:ENABLE_CPU_OFFLOAD -eq "1") {
+        $offGb = if ($env:CPU_OFFLOAD_GB) { $env:CPU_OFFLOAD_GB } else { "4" }
+        $vllmArgs += " --cpu-offload-gb $offGb"
+    }
+    if ($env:ENABLE_KVCACHED -eq "true" -or $env:ENABLE_KVCACHED -eq "1") {
+        Write-Host "  [!!] ENABLE_KVCACHED được bật nhưng CHƯA tích hợp (cần thư viện kvcached trên máy GPU) — bỏ qua." -ForegroundColor Yellow
+    }
+    $quantNote = if ($env:LLM_QUANTIZATION) { " [quant: $($env:LLM_QUANTIZATION)]" } else { "" }
+    Write-Host "  -> Đang bật vLLM Server (Port 8080) với model $($env:LLM_MODEL)$quantNote..."
+    Start-Process -FilePath $PythonExe -ArgumentList $vllmArgs -WorkingDirectory "$ProjectRoot" -WindowStyle Minimized
 }
 
 # 5. Start Ollama
 if ($env:LLM_BACKEND -eq "ollama") {
     Write-Host "  -> Đang bật Ollama Server (Port 11434)..."
-    $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
-    $ollamaExe = if ($ollamaCmd) { $ollamaCmd.Source } else { $null }
-    if (-not $ollamaExe) { $ollamaExe = "C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\ollama.exe" }
-    # $env:OLLAMA_MODELS is already set above and Start-Process inherits this process's
-    # environment, so launch ollama directly. Routing through `cmd /c set VAR=... && ...`
-    # broke (or injected) when the install path contained cmd metacharacters (& ^ ( ) %).
-    Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Minimized
+    # Prefer the bundled Ollama that ships with the app at <ProjectRoot>\ollama\ollama.exe
+    # (its CUDA libs live under ollama\lib\ollama\cuda_v12). Fall back to one already on PATH.
+    $ollamaExe = $null
+    $bundledOllama = "$ProjectRoot\ollama\ollama.exe"
+    if (Test-Path $bundledOllama) {
+        $ollamaExe = $bundledOllama
+        $env:PATH = "$ProjectRoot\ollama;$env:PATH"
+    } else {
+        $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
+        if ($ollamaCmd) { $ollamaExe = $ollamaCmd.Source }
+    }
+    if (-not $ollamaExe) {
+        Write-Host "  [XX] Không tìm thấy Ollama (bundled hoặc trên PATH). Cài Ollama hoặc đặt vào '$bundledOllama'." -ForegroundColor Red
+    } else {
+        # $env:OLLAMA_MODELS is already set above and Start-Process inherits this process's
+        # environment, so launch ollama directly. Routing through `cmd /c set VAR=... && ...`
+        # broke (or injected) when the install path contained cmd metacharacters (& ^ ( ) %).
+        Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Minimized
+    }
 }
 
 # 6. Start Frontend

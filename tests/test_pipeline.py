@@ -67,6 +67,30 @@ async def test_pipeline_ocr_failure_continues(job):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_empty_transcript_fails_fast(job):
+    """An empty transcript (transcribe 'succeeds' but returns 0 segments = no speech) must be a
+    phase-1 FAILURE with an explicit reason, not a misleading 0-segment success (finding 1.9)."""
+    settings = Settings(vram_profile="16gb", enable_lipsync=False, http_retries=1)
+    ok = StageResult(stage="x", success=True, output_path="/tmp/x")
+    transcribe_ok = StageResult(stage="transcribe", success=True, duration_seconds=1.5)
+    translate = AsyncMock()  # must never be reached
+
+    with (
+        patch("orchestrator.pipeline.run_audio_separate", new_callable=AsyncMock, return_value=ok),
+        patch("orchestrator.pipeline.run_video_ocr", new_callable=AsyncMock, return_value=ok),
+        patch("orchestrator.pipeline.run_transcribe", new_callable=AsyncMock, return_value=(transcribe_ok, [])),
+        patch("orchestrator.pipeline.run_translate", translate),
+    ):
+        results_phase1, translated_segments = await run_pipeline_phase1(job, settings)
+
+    assert translated_segments == []
+    assert results_phase1["transcribe"].success is False
+    assert "no speech" in (results_phase1["transcribe"].error or "").lower()
+    assert "translate" not in results_phase1  # aborted before translate
+    translate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_mux_exception(job):
     """Xác nhận nếu mix_audio_to_video quăng lỗi thì mux_result.success = False."""
     settings = Settings(vram_profile="16gb", enable_lipsync=False, http_retries=1)

@@ -6,6 +6,7 @@ import ReviewModal from './components/ReviewModal';
 import ConfigModal from './components/ConfigModal';
 import WatchFolderModal from './components/WatchFolderModal';
 import Toast from './components/Toast';
+import SystemStatus from './components/SystemStatus';
 import { PlayCircle, Settings, RefreshCw, Film, Edit3, Smile, Eraser, FolderSearch, Ban } from 'lucide-react';
 import { API_BASE } from './api';
 
@@ -31,15 +32,25 @@ function App() {
   // (e.g. re-dubbing the already-selected video).
   const [pollKey, setPollKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // Guards the Start button against a double-click firing duplicate POST /api/dub.
+  const [isStarting, setIsStarting] = useState(false);
   const [toast, setToast] = useState(null);
+  // Monotonic id so an identical consecutive toast still remounts (via key) and gets a full timer.
+  const toastIdRef = useRef(0);
+  // Reflects the latest selected video across poll closures so a late status tick for a
+  // previously-selected video can be dropped instead of clobbering the current row/job_id.
+  const selectedVideoRef = useRef(selectedVideo);
+  selectedVideoRef.current = selectedVideo;
 
   const showToast = (message, type = 'info') => {
-    setToast({ message, type });
+    setToast({ message, type, id: ++toastIdRef.current });
   };
 
   const fetchVideos = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/videos`);
+      const res = await fetch(`${API_BASE}/api/videos`, { signal: AbortSignal.timeout(15000) });
+      // A JSON error body without `videos` (or a hung request) must not blank the library.
+      if (!res.ok) { console.error('fetchVideos HTTP', res.status); return []; }
       const data = await res.json();
       const list = data.videos || [];
       setVideos(list);
@@ -68,13 +79,19 @@ function App() {
     if (!selectedVideo) return;
     setStatusData(null); // Clear old status immediately when switching videos
     let stopped = false;
+    let timeoutId;
+    const fetchedFor = selectedVideo;   // the video this poll loop belongs to
 
     const STATIC_STATUSES = new Set(['AWAITING_REVIEW', 'COMPLETED', 'FAILED', 'NOT_FOUND', 'CANCELLED']);
 
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/status/${encodeURIComponent(selectedVideo)}`);
+        const res = await fetch(`${API_BASE}/api/status/${encodeURIComponent(fetchedFor)}`, { signal: AbortSignal.timeout(10000) });
         const data = await res.json();
+        // Drop a late tick: the loop was torn down (stopped) or the user has since selected
+        // another video. Writing here would clobber the now-current video's row/job_id and a
+        // later cancel/review could then hit the wrong job.
+        if (stopped || fetchedFor !== selectedVideoRef.current) return null;
         setStatusData(data);
         if (data.status === 'COMPLETED') fetchVideos();
         if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(data.status)) stopped = true;
@@ -89,12 +106,12 @@ function App() {
       const status = await fetchStatus();
       if (!stopped) {
         const delay = STATIC_STATUSES.has(status) ? 15000 : 2000;
-        setTimeout(poll, delay);
+        timeoutId = setTimeout(poll, delay);
       }
     };
 
     poll();
-    return () => { stopped = true; };
+    return () => { stopped = true; clearTimeout(timeoutId); };
   }, [selectedVideo, pollKey]);
 
   // Sync the latest statusData back to the videos list for instant sidebar updates.
@@ -130,6 +147,8 @@ function App() {
   };
 
   const startDubbing = async (filename) => {
+    if (isStarting) return;   // guard against a double-click firing duplicate POST /api/dub
+    setIsStarting(true);
     try {
       localStorage.setItem('defaultVoiceMode', voiceMode);
       localStorage.setItem('defaultVoicePreset', voicePreset);
@@ -147,6 +166,8 @@ function App() {
     } catch (e) {
       console.error(e);
       showToast('Không thể bắt đầu lồng tiếng', 'error');
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -324,8 +345,8 @@ function App() {
             )}
 
             <div className="config-actions">
-              <button className="btn btn-primary btn-large" onClick={() => startDubbing(selectedVideo)}>
-                <PlayCircle size={22} /> Bắt đầu lồng tiếng
+              <button className="btn btn-primary btn-large" onClick={() => startDubbing(selectedVideo)} disabled={isStarting}>
+                <PlayCircle size={22} /> {isStarting ? 'Đang bắt đầu…' : 'Bắt đầu lồng tiếng'}
               </button>
             </div>
           </div>
@@ -353,6 +374,7 @@ function App() {
           <p className="subtitle">Tự động hóa toàn bộ quy trình dịch và lồng tiếng video</p>
         </div>
         <div className="header-actions">
+          <SystemStatus />
           <button className="btn btn-outline" onClick={handleRefresh} disabled={isRefreshing}>
             <RefreshCw size={18} className={isRefreshing ? 'spinner' : ''} /> Làm mới
           </button>
@@ -390,9 +412,9 @@ function App() {
                   >
                     <div className="video-item-info">
                       <p className="video-filename" title={v.filename}>{v.filename}</p>
-                      <span className={`status-dot ${v.status.toLowerCase()}`} title={v.status} />
+                      <span className={`status-dot ${(v.status || '').toLowerCase()}`} title={v.status} />
                     </div>
-                    <span className={`status-badge-small status-${v.status.toLowerCase()}`}>
+                    <span className={`status-badge-small status-${(v.status || '').toLowerCase()}`}>
                       {v.status === 'PENDING' ? 'MỚI' :
                        v.status === 'COMPLETED' ? 'HOÀN THÀNH' :
                        v.status === 'AWAITING_REVIEW' ? 'CẦN DUYỆT' :
@@ -472,10 +494,11 @@ function App() {
 
       {toast && (
         <div className="toast-container">
-          <Toast 
-            message={toast.message} 
-            type={toast.type} 
-            onClose={() => setToast(null)} 
+          <Toast
+            key={toast.id}
+            message={toast.message}
+            type={toast.type}
+            onClose={() => setToast(null)}
           />
         </div>
       )}

@@ -14,12 +14,25 @@ import traceback
 # We preload them via ctypes so Windows' LoadLibrary reuses the handles.
 # ---------------------------------------------------------------------------
 def _preload_cuda12_dlls():
-    _CUDA12_PATHS = [
-        # Ollama bundles cudart64_12.dll + cublas DLLs for its GPU backend
-        r"C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\lib\ollama\cuda_v12\cudart64_12.dll",
-        r"C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\lib\ollama\cuda_v12\cublas64_12.dll",
-        r"C:\Users\ezycloudx-admin\AppData\Local\Programs\Ollama\lib\ollama\cuda_v12\cublasLt64_12.dll",
-    ]
+    # The deployment bundle ships the CUDA 12 runtime DLLs under
+    # <ProjectRoot>/ollama/lib/ollama/cuda_v12/. Compute candidate roots from an
+    # env override (VD_ROOT / PROJECT_ROOT) and, as a fallback, the project root
+    # relative to this service file — never a hardcoded per-machine absolute path.
+    _DLL_NAMES = ("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
+    roots = []
+    for _env in ("VD_ROOT", "PROJECT_ROOT"):
+        _val = os.environ.get(_env, "").strip()
+        if _val:
+            roots.append(_val)
+    # <ProjectRoot> is the parent of this service directory.
+    roots.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    _CUDA12_PATHS = []
+    for _root in roots:
+        _cuda_dir = os.path.join(_root, "ollama", "lib", "ollama", "cuda_v12")
+        for _name in _DLL_NAMES:
+            _CUDA12_PATHS.append(os.path.join(_cuda_dir, _name))
+
     # Also scan venv/nvidia/* for cuBLAS and nvrtc
     nvidia_root = os.path.join(os.path.dirname(__file__), "..", "venv", "lib", "site-packages", "nvidia")
     nvidia_root = os.path.normpath(nvidia_root)
@@ -37,6 +50,17 @@ def _preload_cuda12_dlls():
                 loaded.append(os.path.basename(path))
             except OSError:
                 pass
+    if not any(name.startswith("cublas64_12") for name in loaded):
+        # Logging isn't configured yet (this runs before basicConfig); use stderr so the
+        # operator sees clearly that GPU STT will likely fail / fall back to CPU.
+        print(
+            "[whisperx] WARNING: cublas64_12.dll was not found or could not be loaded from "
+            "any candidate path; ctranslate2 GPU STT may fall back to CPU or fail. Searched "
+            "ollama/lib/ollama/cuda_v12 under: " + ", ".join(roots) + " (plus venv nvidia "
+            "site-packages). Set VD_ROOT or PROJECT_ROOT to the project root that contains "
+            "ollama/lib/ollama/cuda_v12.",
+            file=sys.stderr,
+        )
     return loaded
 
 _preloaded = _preload_cuda12_dlls()
@@ -58,10 +82,51 @@ def _ensure_ffmpeg_on_path():
 
 _ensure_ffmpeg_on_path()
 
+
+def _preload_real_cudnn() -> bool:
+    """cuDNN is OFF by default: PyTorch cu118 ships a stub cudnn64_9.dll (missing cudnnGetLibConfig)
+    that crashes the align/VAD torch conv ops. Opt in with WHISPERX_ENABLE_CUDNN=1: preload a REAL
+    cudnn64_*.dll from the nvidia-cudnn wheel (venv/.../nvidia/cudnn/bin) so torch resolves to it,
+    enabling cuDNN (~1.5-3x faster alignment/VAD). Returns False — stay disabled (unchanged, working
+    behavior) — unless the flag is set AND a real cudnn actually loads."""
+    if os.environ.get("WHISPERX_ENABLE_CUDNN", "0").strip().lower() not in ("1", "true", "yes"):
+        return False
+    nvidia_root = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "venv", "lib", "site-packages", "nvidia")
+    )
+    cudnn_dll = None
+    if os.path.isdir(nvidia_root):
+        for root, _dirs, files in os.walk(nvidia_root):
+            for f in files:
+                if f.lower().startswith("cudnn64_") and f.lower().endswith(".dll"):
+                    cudnn_dll = os.path.join(root, f)
+                    break
+            if cudnn_dll:
+                break
+    if not cudnn_dll:
+        print("[whisperx] WHISPERX_ENABLE_CUDNN=1 but no real cudnn64_*.dll under venv nvidia — "
+              "keeping cuDNN disabled.", file=sys.stderr)
+        return False
+    try:
+        ctypes.WinDLL(cudnn_dll)
+    except OSError as e:
+        print(f"[whisperx] Could not load {cudnn_dll} ({e}) — keeping cuDNN disabled.", file=sys.stderr)
+        return False
+    print(f"[whisperx] cuDNN ENABLED — preloaded real {os.path.basename(cudnn_dll)}.", file=sys.stderr)
+    return True
+
+
+_CUDNN_OK = _preload_real_cudnn()
+
 import torch
-# PyTorch cu118's bundled cudnn64_9.dll is a stub missing cudnnGetLibConfig.
-# Disable cuDNN so pyannote/torch ops fall back to basic CUDA kernels.
-torch.backends.cudnn.enabled = False
+# cuDNN disabled by default (PyTorch cu118's bundled cudnn64_9.dll is a stub missing
+# cudnnGetLibConfig → crashes the conv ops used by align/VAD). Opt in via WHISPERX_ENABLE_CUDNN=1
+# once a real cudnn is present (preloaded above) for ~1.5-3x faster alignment/VAD.
+if _CUDNN_OK:
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.benchmark = True  # autotune conv algos for the repeated align/VAD passes
+else:
+    torch.backends.cudnn.enabled = False
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -104,7 +169,7 @@ def _detect_device():
 
 DEVICE = _detect_device()
 COMPUTE_TYPE = os.environ.get("COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
-MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3")
+MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 BATCH_SIZE = int(os.environ.get("WHISPER_BATCH_SIZE", "32"))  # 23GB GPU handles >16
 MODEL_DIR = os.environ.get("WHISPER_MODEL_DIR", "").strip() or None   # explicit download root
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
@@ -202,15 +267,18 @@ def health():
 @app.post("/unload")
 def unload():
     global _model, _align_cache, _diarize_model
-    _model = None
-    _align_cache.clear()
-    _diarize_model = None
-    
-    if DEVICE == "cuda":
-        import torch
-        torch.cuda.empty_cache()
-        log.info("Models unloaded and CUDA cache cleared.")
-        
+    # Hold the inference lock so we drain any in-flight transcribe() before tearing down the
+    # model — otherwise we'd free CUDA memory out from under a running generate().
+    with _infer_lock:
+        _model = None
+        _align_cache.clear()
+        _diarize_model = None
+
+        if DEVICE == "cuda":
+            import torch
+            torch.cuda.empty_cache()
+            log.info("Models unloaded and CUDA cache cleared.")
+
     return {"status": "unloaded"}
 
 
@@ -221,11 +289,18 @@ async def transcribe(file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
-        data = await file.read()
-        tmp.write(data)
+        # Stream the upload to disk in chunks instead of buffering the whole file in RAM
+        # (a multi-hundred-MB audio/video track would otherwise spike memory per request).
+        total = 0
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            total += len(chunk)
         tmp.flush()
         tmp.close()
-        log.info("received %.2f MB -> %s", len(data) / 1e6, tmp.name)
+        log.info("received %.2f MB -> %s", total / 1e6, tmp.name)
 
         def _run_inference():
             # Runs in a worker thread so the multi-minute, CPU/GPU-bound whisperx calls do not
@@ -286,5 +361,14 @@ async def transcribe(file: UploadFile = File(...)):
         log.error("transcription failed:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail="transcription failed")
     finally:
-        if os.path.exists(tmp.name):
-            os.remove(tmp.name)
+        # Ensure the handle is closed before removing — on Windows os.remove raises
+        # PermissionError if the file is still open (e.g. an error before tmp.close()).
+        try:
+            tmp.close()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(tmp.name):
+                os.remove(tmp.name)
+        except OSError as e:
+            log.warning("could not remove temp file %s: %s", tmp.name, e)

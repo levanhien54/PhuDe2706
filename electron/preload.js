@@ -10,3 +10,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion:   ()  => ipcRenderer.invoke('app:version'),
   selectFolder: ()  => ipcRenderer.invoke('dialog:selectFolder'),
 });
+
+// Splash-screen service dashboard API (contextIsolation-safe).
+contextBridge.exposeInMainWorld('vd', {
+  onServiceStatus: (cb) => ipcRenderer.on('service-status', (_e, data) => cb(data)),
+  openLogs: () => ipcRenderer.invoke('open-logs'),
+});

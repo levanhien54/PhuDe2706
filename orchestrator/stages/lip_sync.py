@@ -3,6 +3,7 @@ from orchestrator.models import PipelineJob, StageResult
 from orchestrator.config import Settings
 from orchestrator.vram_manager import VRAMManager
 from orchestrator.stages.latentsync_client import run_latentsync_inference
+from orchestrator.stages.musetalk_client import run_musetalk_inference
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
@@ -28,9 +29,23 @@ async def run_lip_sync(
             duration_seconds=0,
         )
 
+    engine = (settings.lipsync_engine or "latentsync").strip().lower()
+    if engine == "musetalk":
+        inference = run_musetalk_inference
+    elif engine == "latentsync":
+        inference = run_latentsync_inference
+    else:
+        # Unknown value: fail loudly instead of silently defaulting to LatentSync.
+        log.error("lipsync_unknown_engine", engine=settings.lipsync_engine)
+        return StageResult(
+            stage="lip_sync", success=False,
+            error=f"Unknown LIPSYNC_ENGINE {settings.lipsync_engine!r} (expected 'latentsync' or 'musetalk')",
+        )
+
     try:
         async with vram.slot("lipsync", _LIPSYNC_VRAM_GB):
-            await run_latentsync_inference(cleaned_video, new_vocal, output_video, settings)
+            log.info("lip_sync_engine", engine=engine)
+            await inference(cleaned_video, new_vocal, output_video, settings)
         return StageResult(
             stage="lip_sync",
             success=True,

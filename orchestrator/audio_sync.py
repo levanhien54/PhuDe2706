@@ -23,16 +23,42 @@ def _resolve_ffmpeg() -> str:
             return cand
     return "ffmpeg"  # last resort — let subprocess raise a clear FileNotFoundError
 
-def stretch_audio(input_path: str, output_path: str, target_duration: float) -> None:
+def _resolve_ffprobe() -> str:
+    """Resolve the ffprobe binary the same way as _resolve_ffmpeg (env -> PATH -> bundled) so
+    callers never depend on PATH. Mirrors _resolve_ffmpeg's search so both tools resolve to the
+    same bundled build."""
+    env_bin = os.environ.get("FFPROBE_BINARY")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for cand in (
+        os.path.join(project_root, "ffmpeg_extracted", "ffmpeg-master-latest-win64-gpl", "bin", "ffprobe.exe"),
+        os.path.join(project_root, "ffprobe.exe"),
+    ):
+        if os.path.exists(cand):
+            return cand
+    return "ffprobe"  # last resort — let subprocess raise a clear FileNotFoundError
+
+def stretch_audio(input_path: str, output_path: str, target_duration: float) -> tuple[np.ndarray, int]:
     """
-    Kéo dãn hoặc nén file âm thanh để đạt được target_duration bằng Pedalboard (chứa lõi thuật toán C++ của Rubberband).
-    Chất lượng cao, không bị méo tiếng như librosa, và không phụ thuộc vào ứng dụng ngoài.
+    Kéo dãn hoặc nén file âm thanh để đạt được target_duration.
+
+    Thuật toán chọn bằng env TIMESTRETCH_ALGO:
+      - "phasevocoder" (mặc định): Pedalboard (lõi Rubberband C++), chất lượng cao.
+      - "wsola": WSOLA qua gói `audiotsm` — tự nhiên hơn, ít méo pha; fallback về Pedalboard/librosa
+        nếu chưa cài audiotsm.
+    KHÔNG master per-segment: high-pass/compressor/loudnorm được áp MỘT LẦN trên toàn bộ giọng ở
+    mix_audio_to_video — master 2 lần (per-segment + mux) làm giọng bị nén/pump. Ghi ra output_path
+    VÀ trả về (audio, sr) để caller khỏi phải đọc lại file từ đĩa.
     """
     print(f"[AudioSync] Xử lý file {input_path} -> target: {target_duration}s")
-    
+
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input file not found: {input_path}")
-        
+
     if target_duration <= 0:
         raise ValueError(f"target_duration must be positive, got {target_duration}")
 
@@ -49,7 +75,7 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float) -> 
 
     if current_duration <= 0:
         sf.write(output_path, y, sr)  # honor the output contract (avoid downstream FileNotFoundError)
-        return
+        return np.asarray(y, dtype=np.float32), sr
 
     # Tính tỉ lệ (rate)
     # rate > 1: chạy nhanh hơn (thời lượng ngắn lại)
@@ -65,37 +91,45 @@ def stretch_audio(input_path: str, output_path: str, target_duration: float) -> 
     elif rate < MIN_RATE:
         print(f"[AudioSync] Warning: stretch rate {rate:.2f} clamped to {MIN_RATE} (segment too short for target)")
         rate = MIN_RATE
-    
+
     print(f" - Original duration: {current_duration:.2f}s, Rate: {rate:.4f}")
-    
-    # Pedalboard đòi hỏi mảng đầu vào có dạng (channels, samples)
+
+    # (channels, samples) cho Pedalboard/WSOLA
     y_2d = y.reshape(1, -1)
-    
-    try:
-        import pedalboard
-        print(f"[AudioSync] Using Pedalboard (Rubberband Phase-Vocoder) for high-quality time stretching...")
-        
-        # 1. Kéo dãn thời gian (Phase Vocoder)
-        y_stretched_2d = pedalboard.time_stretch(y_2d, sr, rate)
-        
-        # 2. Vocal Mastering Chain (Làm rõ giọng, nén âm lượng, chống rè)
-        board = pedalboard.Pedalboard([
-            pedalboard.HighpassFilter(cutoff_frequency_hz=80),  # Cắt tiếng lụp bụp ở dải trầm
-            pedalboard.Compressor(threshold_db=-15, ratio=3.0, attack_ms=5.0, release_ms=50.0), # Làm đều âm lượng giọng
-            pedalboard.Limiter(threshold_db=-1.5) # Chống rè (clipping)
-        ])
-        y_stretched_2d = board(y_stretched_2d, sr)
-        
-        y_stretched = y_stretched_2d[0] # Chuyển lại thành (samples,)
-        print(f"[AudioSync] Phase-Vocoder & Vocal Mastering applied successfully.")
-    except ImportError:
-        print("[AudioSync] CẢNH BÁO: Thư viện pedalboard chưa được cài đặt, fallback về librosa (chất lượng kém hơn)...")
-        import librosa
-        y_stretched = librosa.effects.time_stretch(y, rate=rate)
-    
-    # Ghi ra file
+    algo = os.environ.get("TIMESTRETCH_ALGO", "phasevocoder").strip().lower()
+
+    y_stretched = None
+    if algo == "wsola":
+        try:
+            import audiotsm
+            from audiotsm.io.array import ArrayReader, ArrayWriter
+            print("[AudioSync] Using WSOLA (audiotsm) for time stretching...")
+            reader = ArrayReader(y_2d)
+            writer = ArrayWriter(channels=1)
+            audiotsm.wsola(1, speed=rate).run(reader, writer)
+            y_stretched = np.asarray(writer.data[0], dtype='float32')
+        except ImportError:
+            print("[AudioSync] CẢNH BÁO: audiotsm chưa cài (WSOLA), fallback về Pedalboard/librosa...")
+
+    if y_stretched is None:
+        try:
+            import pedalboard
+            print("[AudioSync] Using Pedalboard (Rubberband Phase-Vocoder) for high-quality time stretching...")
+            y_stretched = pedalboard.time_stretch(y_2d, sr, rate)[0]  # (samples,)
+        except ImportError:
+            print("[AudioSync] CẢNH BÁO: Thư viện pedalboard chưa được cài đặt, fallback về librosa (chất lượng kém hơn)...")
+            import librosa
+            y_stretched = librosa.effects.time_stretch(y, rate=rate)
+
+    # NOTE: mastering (high-pass 80Hz + compressor -15dB/3:1 + loudnorm) is applied ONCE on the full
+    # concatenated voice in mix_audio_to_video. Doing it per-segment here as well double-compressed
+    # the dub (pumping / thinned voice), so it is intentionally NOT applied here.
+    y_stretched = np.asarray(y_stretched, dtype=np.float32)
+
+    # Ghi ra file (giữ artifact để debug) và trả mảng để caller khỏi đọc lại từ đĩa.
     sf.write(output_path, y_stretched, sr)
     print(f" - Đã lưu output: {output_path}")
+    return y_stretched, sr
 
 def mix_audio_to_video(video_path: str, new_vocal_path: str, background_path: str,
                        output_video_path: str, bg_denoise: bool = True) -> None:
@@ -149,7 +183,7 @@ def mix_audio_to_video(video_path: str, new_vocal_path: str, background_path: st
         "-shortest",     # end at the (finite) video stream; apad keeps audio >= video first
         output_video_path
     ]
-    
+
     # encoding+errors guard: ffmpeg stderr referencing Korean/Japanese filenames must not
     # raise UnicodeDecodeError under a non-UTF-8 Windows code page and mask the real error.
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")

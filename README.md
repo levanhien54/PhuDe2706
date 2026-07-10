@@ -2,6 +2,9 @@
 
 Hệ thống dubbing video **100% offline** — tách âm, nhận diện giọng, dịch thuật LLM, clone giọng, đồng bộ khẩu hình, xuất video — tối ưu cho GPU 16–24 GB VRAM chạy hoàn toàn bằng Python Native (không sử dụng Docker).
 
+> 📖 **Dựng môi trường phát triển đầy đủ** (từ máy Windows trống → chạy dev → đóng gói bản cài):
+> xem [docs/HUONG-DAN-MOI-TRUONG-PHAT-TRIEN.md](docs/HUONG-DAN-MOI-TRUONG-PHAT-TRIEN.md).
+
 ---
 
 ## Yêu cầu hệ thống

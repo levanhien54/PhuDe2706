@@ -64,6 +64,7 @@ async def test_run_synthesize_success(job, settings, setup_temp):
     def fake_stretch_audio(input_path, output_path, target_duration):
         data, file_sr = sf.read(input_path)
         sf.write(output_path, data, file_sr)
+        return np.asarray(data, dtype=np.float32), file_sr
 
     with patch(
         "orchestrator.stages.synthesize.TTSClient"

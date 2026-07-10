@@ -2,6 +2,9 @@ import React, { useCallback, useState } from 'react';
 import { FileVideo, Loader2 } from 'lucide-react';
 import { API_BASE } from '../api';
 
+// Client-side guard matching the advertised limit (see the "Tối đa 500MB" hint below).
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
 export default function Uploader({ onUploadSuccess }) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -17,8 +20,9 @@ export default function Uploader({ onUploadSuccess }) {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    if (isUploading) return;   // ignore drops while an upload is in flight
     if (e.dataTransfer.files?.[0]) handleFiles(e.dataTransfer.files[0]);
-  }, []);
+  }, [isUploading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleChange = (e) => {
     e.preventDefault();
@@ -26,7 +30,9 @@ export default function Uploader({ onUploadSuccess }) {
   };
 
   const handleFiles = async (file) => {
+    if (isUploading) return;   // one upload at a time
     if (!file.type.includes('video')) { alert('Vui lòng chọn file video!'); return; }
+    if (file.size > MAX_UPLOAD_BYTES) { alert('File quá lớn! Kích thước tối đa là 500MB.'); return; }
     setIsUploading(true);
     const formData = new FormData();
     formData.append('file', file);
@@ -34,7 +40,7 @@ export default function Uploader({ onUploadSuccess }) {
       const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) onUploadSuccess(data.filename);
-      else alert('Lỗi upload: ' + data.message);
+      else alert('Lỗi upload: ' + (data.detail || 'Không xác định'));
     } catch {
       alert('Không thể kết nối đến Backend');
     } finally {

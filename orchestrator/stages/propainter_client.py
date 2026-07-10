@@ -2,20 +2,27 @@ import os
 import sys
 import time
 import asyncio
+from orchestrator.clients.base import gpu_subprocess_timeout
 from orchestrator.logger import get_logger
 
 log = get_logger(__name__)
 
 async def run_propainter_inference(
-    video_path: str, mask_path: str, output_path: str, propainter_dir: str
+    video_path: str, mask_path: str, output_path: str, propainter_dir: str,
+    *, fp16: bool = True, resize_ratio: float = 1.0, subvideo_length: int = 80,
 ) -> bool:
     """
     Calls the ProPainter inference script natively via a subprocess.
     Requires ProPainter repository cloned in models/propainter.
+
+    HD/OOM mitigation (sczhou/ProPainter flags — verify against the installed version):
+      fp16 -> --fp16 (half precision), resize_ratio -> --resize_ratio (downscale),
+      subvideo_length -> --subvideo_length (frames per temporal chunk; smaller = less VRAM).
     """
-    log.info("propainter_start", video=video_path, mask=mask_path)
+    log.info("propainter_start", video=video_path, mask=mask_path,
+             fp16=fp16, resize_ratio=resize_ratio, subvideo_length=subvideo_length)
     inference_script = os.path.join(propainter_dir, "inference_propainter.py")
-    
+
     if not os.path.exists(inference_script):
         log.error("propainter_missing", path=inference_script)
         return False
@@ -27,8 +34,12 @@ async def run_propainter_inference(
         sys.executable, inference_script,
         "--video", video_path,
         "--mask", mask_path,
-        "--output", temp_out_dir
+        "--output", temp_out_dir,
+        "--resize_ratio", str(resize_ratio),
+        "--subvideo_length", str(int(subvideo_length)),
     ]
+    if fp16:
+        cmd.append("--fp16")
 
     proc = None
     try:
@@ -38,7 +49,15 @@ async def run_propainter_inference(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
+        timeout = gpu_subprocess_timeout()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # Wedged child: kill it so it can't hang the worker forever (holds ~8GB VRAM).
+            log.error("propainter_timeout", timeout=timeout)
+            proc.kill()
+            await proc.wait()
+            return False
 
         if proc.returncode != 0:
             log.error("propainter_failed", error=stderr.decode('utf-8', errors='replace'))

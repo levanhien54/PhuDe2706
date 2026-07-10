@@ -88,8 +88,20 @@ async def run_pipeline_phase1(job: PipelineJob, settings: Settings) -> tuple[dic
     results["transcribe"] = transcribe_result
     _save_progress(job.job_id, "phase1", results)
 
-    if not transcribe_result.success or not segments:
-        log.error("pipeline_abort", reason="transcribe failed or empty")
+    if not transcribe_result.success:
+        log.error("pipeline_abort", reason="transcribe failed")
+        clear_job_context()
+        return results, []
+
+    if not segments:
+        # Empty transcript = no speech detected. Fail phase-1 explicitly (overwrite the
+        # transcribe result with a failure + reason) so the job ends FAILED with a clear
+        # cause, instead of a misleading 0-segment "success" that only fails later in phase-2.
+        log.error("pipeline_abort", reason="no speech detected")
+        results["transcribe"] = StageResult(
+            stage="transcribe", success=False, error="no speech detected",
+            duration_seconds=transcribe_result.duration_seconds,
+        )
         clear_job_context()
         return results, []
 

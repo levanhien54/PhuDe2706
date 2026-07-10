@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import asyncio
+from orchestrator.clients.base import gpu_subprocess_timeout
 from orchestrator.config import Settings
 from orchestrator.logger import get_logger
 
@@ -46,8 +47,15 @@ async def run_latentsync_inference(video_path: str, audio_path: str, output_path
         stderr=subprocess.PIPE
     )
     
+    timeout = gpu_subprocess_timeout()
     try:
-        stdout, stderr = await process.communicate()
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        # Wedged child: kill it so it can't hang the worker forever (holds ~8GB VRAM).
+        log.error("latentsync_timeout", timeout=timeout)
+        process.kill()
+        await process.wait()
+        raise RuntimeError(f"LatentSync inference vượt quá thời gian cho phép ({timeout}s) — đã hủy tiến trình con.")
     except asyncio.CancelledError:
         # Job cancelled mid-inference: kill the LatentSync child (holds ~8GB VRAM) so it does
         # not orphan and OOM the next job, then propagate the cancel.

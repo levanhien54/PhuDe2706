@@ -1,4 +1,5 @@
 import os
+import sys
 import collections
 import cv2
 import math
@@ -10,6 +11,15 @@ import tempfile
 import numpy as np
 # PaddleOCR is imported lazily inside get_ocr_instance() to avoid crashing
 # the orchestrator at startup when torch/paddle DLLs are unavailable.
+
+# video_process.py is also launched as a standalone script (python orchestrator/video_process.py),
+# where sys.path[0] is orchestrator/ (not the repo root), so a bare `import orchestrator.*` would
+# fail. Put the repo root on sys.path so the shared ffmpeg/ffprobe resolvers import in BOTH the
+# imported-module and the __main__ subprocess cases.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from orchestrator.audio_sync import _resolve_ffmpeg, _resolve_ffprobe
 
 # --- NVENC caching ---
 _NVENC_AVAILABLE: bool | None = None
@@ -23,8 +33,9 @@ def _check_nvenc_cached() -> bool:
             # used to crash the whole writer). Do a real 1-frame test encode WITH the same params
             # we use below; fall back to libx264 if it fails.
             res = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
-                 '-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-b:v', '5M', '-f', 'null', '-'],
+                [_resolve_ffmpeg(), '-hide_banner', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
+                 '-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0',
+                 '-f', 'null', '-'],
                 capture_output=True, timeout=25
             )
             _NVENC_AVAILABLE = (res.returncode == 0)
@@ -33,6 +44,25 @@ def _check_nvenc_cached() -> bool:
         except Exception:
             _NVENC_AVAILABLE = False
     return _NVENC_AVAILABLE
+
+
+def _nvenc_or_x264_args(cq: int = 23) -> list[str]:
+    """Lossy H.264 encoder args: constant-quality NVENC on the GPU when a real session can open
+    (h264_nvenc -cq is x264-crf-equivalent and adapts bitrate to content — unlike a fixed -b:v),
+    else libx264 at the same crf. Probe params above match these so the probe validates the real
+    config. Used by the OCR-blur re-encode and the frame writer."""
+    if _check_nvenc_cached():
+        return ['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', str(cq), '-b:v', '0']
+    return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', str(cq)]
+
+
+def _should_precompute_ocr(mask_only: bool, has_dynamic: bool, ocr_mode: str) -> bool:
+    """Whether to run the batched per-frame OCR precompute (ocr_lookup, the dynamic text boxes).
+    The ProPainter mask writer (mask_only) ALWAYS needs it — otherwise the mask holds only static
+    watermark boxes and misses the moving subtitles, so ProPainter inpaints watermarks but leaves
+    the subtitles on screen. The inpaint pipeline needs it only when dynamic text is present; the
+    default "blur" path OCRs each frame itself in _precise_blur_per_frame, so it never precomputes."""
+    return bool(mask_only or (has_dynamic and ocr_mode == "inpaint"))
 
 # --- Opt 7: Threading lock for OCR singleton (multi-job safety) ---
 _ocr_lock = _threading.Lock()
@@ -113,14 +143,22 @@ def get_ocr_instance():
 
 
 # --- Opt 2: Downscale frame for OCR, scale boxes back ---
-OCR_MAX_H = 480
+# CRAFT detects on frames downscaled to this height. 480 is fast; raise to 720 (env OCR_MAX_H) on a
+# 24GB GPU for better recall on small subtitles/credits (more OCR pixels = slower detection).
+# Guarded like OCR_BATCH/OCR_DET_EVERY — a bad value must not crash the module import.
+try:
+    OCR_MAX_H = int(os.environ.get("OCR_MAX_H", "480"))
+except ValueError:
+    OCR_MAX_H = 480
 
 def _scale_frame_for_ocr(frame):
     h, w = frame.shape[:2]
     if h <= OCR_MAX_H:
         return frame, 1.0
     scale = OCR_MAX_H / h
-    small = cv2.resize(frame, (int(w * scale), OCR_MAX_H), interpolation=cv2.INTER_AREA)
+    # max(1, ...) — a very narrow tall frame can make int(w*scale) round down to 0, which cv2.resize
+    # rejects (zero-width dst). Clamp the target width to at least 1px.
+    small = cv2.resize(frame, (max(1, int(w * scale)), OCR_MAX_H), interpolation=cv2.INTER_AREA)
     return small, scale
 
 
@@ -455,7 +493,7 @@ def precompute_ocr_results(
     frame_bytes = out_w * out_h * 3
 
     cmd = [
-        'ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', input_path,
+        _resolve_ffmpeg(), '-hide_banner', '-loglevel', 'error', '-i', input_path,
         '-vf', f'fps={eff_fps:.6f},scale={out_w}:{out_h}',
         '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-',
     ]
@@ -472,7 +510,10 @@ def precompute_ocr_results(
             small = np.frombuffer(raw, dtype=np.uint8).reshape(out_h, out_w, 3).copy()
             with _ocr_lock:
                 res = ocr.ocr(small, det=True, rec=False, cls=False)
-            fi = min(i * frame_skip, max(0, total_frames - 1))
+            # When total_frames is known, clamp to the last real index; when it's unknown (<=0),
+            # key by the raw sampled index i*frame_skip so successive frames don't all collapse
+            # onto index 0 (min(..., -1→0) mapped every frame to 0 before).
+            fi = min(i * frame_skip, total_frames - 1) if total_frames > 0 else i * frame_skip
             results[fi] = _parse_ocr_boxes(res, out_w, out_h, width, height)
             i += 1
     finally:
@@ -757,7 +798,7 @@ def _fast_blur_ffmpeg(input_path, output_path, fps, width, height,
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(filt)
         cmd = [
-            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', input_path,
+            _resolve_ffmpeg(), '-y', '-hide_banner', '-loglevel', 'error', '-i', input_path,
             '-/filter_complex', filt_path, '-map', f'[{final}]', '-an',
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
             output_path,
@@ -791,14 +832,27 @@ def _precise_blur_per_frame(input_path, output_path, fps, width, height,
 
     frame_bytes = width * height * 3
     det_every = max(1, int(det_every))
+    _ffmpeg = _resolve_ffmpeg()
+    # A raw-frame pipe carries no timestamps, so the re-encode must be assigned a constant rate.
+    # For a CFR source that rate is exactly `fps` (unchanged). For a VARIABLE-frame-rate source,
+    # using `fps` maps N frames onto N/fps seconds != the true duration → progressive A/V drift once
+    # the original audio is muxed back. _probe_vfr_avg_fps returns the frames/duration average for
+    # VFR (which re-maps the same frame count onto the same wall-clock duration) and None for CFR.
+    enc_fps = fps
+    _vfr_fps = _probe_vfr_avg_fps(input_path, fps)
+    if _vfr_fps:
+        enc_fps = _vfr_fps
+        print(f"[VideoProcess] Nguồn VFR → encode ở {enc_fps:.4f} fps trung bình (giữ thời lượng, tránh lệch A/V).")
     dec = subprocess.Popen(
-        ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', input_path,
-         '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'],
+        [_ffmpeg, '-hide_banner', '-loglevel', 'error', '-i', input_path,
+         # passthrough: emit exactly the source's real frames (no vsync dup/drop) so the frame count
+         # we re-time at enc_fps matches the duration the average rate was computed from. No-op for CFR.
+         '-fps_mode', 'passthrough', '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     enc = subprocess.Popen(
-        ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-         '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{width}x{height}', '-r', f'{fps:.6f}',
-         '-i', '-', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+        [_ffmpeg, '-y', '-hide_banner', '-loglevel', 'error',
+         '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{width}x{height}', '-r', f'{enc_fps:.6f}',
+         '-i', '-', '-an', *_nvenc_or_x264_args(23),
          '-pix_fmt', 'yuv420p', output_path],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     enc_err: collections.deque = collections.deque(maxlen=64)
@@ -937,7 +991,7 @@ def _probe_frame_count(input_path, fps):
     """Recover a frame count via ffprobe when cv2 reports <=0 (some MKV/streamed/VFR files)."""
     try:
         r = subprocess.run(
-            ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            [_resolve_ffprobe(), '-v', 'error', '-select_streams', 'v:0',
              '-show_entries', 'stream=nb_frames,duration', '-of', 'default=nw=1:nk=1', input_path],
             capture_output=True, text=True, timeout=30)
         toks = r.stdout.split()
@@ -954,6 +1008,53 @@ def _probe_frame_count(input_path, fps):
         except ValueError:
             pass
     return 0
+
+
+def _rational_to_float(s: str) -> float:
+    """Parse an ffprobe rate token ("30000/1001", "25/1", or a bare float) to fps; 0.0 on failure."""
+    s = (s or "").strip()
+    if not s:
+        return 0.0
+    try:
+        if "/" in s:
+            num, den = s.split("/", 1)
+            den = float(den)
+            return float(num) / den if den else 0.0
+        return float(s)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _probe_vfr_avg_fps(input_path, nominal_fps):
+    """Return an average fps to encode a VARIABLE-frame-rate source at so the re-encoded (necessarily
+    constant-rate) output keeps the SAME total duration as the source; return None for constant-rate
+    input so the caller keeps its existing fixed `-r nominal_fps` path byte-for-byte.
+
+    ffprobe exposes r_frame_rate (the nominal/base rate) and avg_frame_rate (frames/duration over the
+    whole stream). For CFR they are equal → return None (no change). For VFR they differ, and
+    avg_frame_rate maps the source's real frame count back onto its real wall-clock duration, which is
+    exactly what a raw-frame re-encode needs to avoid A/V drift (see caller). Any probe/parse failure
+    also returns None (fall back to the nominal rate — no regression)."""
+    try:
+        r = subprocess.run(
+            [_resolve_ffprobe(), '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=r_frame_rate,avg_frame_rate',
+             '-of', 'default=nw=1:nk=1', input_path],
+            capture_output=True, text=True, timeout=30)
+        toks = r.stdout.split()
+    except Exception:
+        return None
+    if len(toks) < 2:
+        return None
+    r_fps = _rational_to_float(toks[0])
+    avg_fps = _rational_to_float(toks[1])
+    if r_fps <= 0 or avg_fps <= 0:
+        return None
+    # CFR → r_frame_rate == avg_frame_rate (within rounding). Signal "no change" so the caller keeps
+    # the existing constant-rate path untouched; only genuine VFR gets the averaged rate.
+    if abs(r_fps - avg_fps) / r_fps <= 0.001:
+        return None
+    return avg_fps
 
 
 def remove_watermark_from_video(
@@ -1006,10 +1107,13 @@ def remove_watermark_from_video(
     temporal_ref = None  # Blur mode: không cần temporal reference
 
     if not mask_only:
-        if 0 < total_frames < _DYNAMIC_CHECK_FRAMES:
-            # Too short for the sample-check (which bails False) → just run the full OCR; it's cheap.
+        if total_frames < _DYNAMIC_CHECK_FRAMES:
+            # Too short for the sample-check (which bails False), OR unknown count (total_frames<=0
+            # when both cv2 and ffprobe fail to report one) → just run the full OCR; it's cheap and,
+            # crucially, avoids the copy-through below shipping the ORIGINAL (subtitled) video as a
+            # false "success" when the frame count is merely unknown rather than actually text-free.
             has_dynamic = True
-            print("[VideoProcess] Clip rất ngắn — chạy OCR đầy đủ.")
+            print("[VideoProcess] Clip ngắn/không rõ số frame — chạy OCR đầy đủ.")
         else:
             print(f"[VideoProcess] Kiểm tra nhanh chữ động ({_DYNAMIC_CHECK_FRAMES} frames)...")
             try:
@@ -1033,9 +1137,11 @@ def remove_watermark_from_video(
         return
 
     # --- Pre-pass C: OCR batch pre-computation ---
-    # Only the inpaint 4-thread pipeline still consumes ocr_lookup. The default "blur" mode now
-    # uses _precise_blur_per_frame, which OCRs every frame itself, so precompute is skipped there.
-    if not mask_only and has_dynamic and _ocr_mode == "inpaint":
+    # ocr_lookup (dynamic per-frame text boxes) feeds BOTH the inpaint 4-thread pipeline and the
+    # ProPainter mask writer (mask_only). mask_only MUST precompute — otherwise the mask holds only
+    # static watermark boxes and ProPainter leaves the moving subtitles on screen. The default
+    # "blur" mode OCRs each frame itself in _precise_blur_per_frame, so it skips this.
+    if _should_precompute_ocr(mask_only, has_dynamic, _ocr_mode):
         print(f"[VideoProcess] Pre-compute OCR theo batch (batch_size={_ocr_batch_size})...")
         try:
             ocr_lookup = precompute_ocr_results(
@@ -1070,6 +1176,25 @@ def remove_watermark_from_video(
             return
         except Exception as e:
             print(f"[VideoProcess] Precise path lỗi ({e}) → fallback pipeline per-frame.")
+            # 0.1: blur mode never populated ocr_lookup (precompute is inpaint-only), and the threaded
+            # fallback below only blurs static_boxes + ocr_lookup. For a dynamic-subtitle clip with no
+            # static watermark that means it would blur NOTHING yet still write every frame and report
+            # success — shipping the ORIGINAL subtitles as "cleaned". Populate ocr_lookup so the
+            # fallback actually removes the text; if there is still nothing to blur, re-raise so the
+            # caller (video_ocr) reports FAILURE instead of a silent no-op success.
+            if not ocr_lookup and has_dynamic:
+                try:
+                    ocr_lookup = precompute_ocr_results(
+                        input_path, total_frames, fps, _ocr_fps, _ocr_batch_size,
+                        width, height, ocr,
+                    )
+                except Exception as pe:
+                    print(f"[VideoProcess] Fallback precompute OCR cũng lỗi: {pe}")
+            if not static_boxes and not any(ocr_lookup.values()):
+                raise RuntimeError(
+                    f"Precise blur thất bại và fallback không có vùng chữ nào để mờ "
+                    f"(lỗi gốc: {e})"
+                ) from e
             cap = cv2.VideoCapture(input_path)
             if not cap.isOpened():
                 raise RuntimeError(f"Không mở lại được {input_path} cho fallback pipeline.")
@@ -1081,9 +1206,16 @@ def remove_watermark_from_video(
         def __init__(self, path, w, h, f, lossless):
             self.path = path
             codec = 'h264_nvenc' if _check_nvenc_cached() else 'libx264'
+            # Same VFR-duration guard as _precise_blur_per_frame: a raw-frame pipe has no timestamps,
+            # so a VFR source re-encoded at the nominal fps drifts against the muxed-back audio. Use
+            # the frames/duration average for VFR; keep the exact str(f) rate for CFR (unchanged).
+            _vfr = _probe_vfr_avg_fps(input_path, f)
+            rate = f'{_vfr:.6f}' if _vfr else str(f)
+            if _vfr:
+                print(f"[VideoProcess] Nguồn VFR → FFmpegWriter encode ở {_vfr:.4f} fps trung bình (giữ thời lượng).")
             cmd = [
-                'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
-                '-s', f'{w}x{h}', '-pix_fmt', 'bgr24', '-r', str(f),
+                _resolve_ffmpeg(), '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+                '-s', f'{w}x{h}', '-pix_fmt', 'bgr24', '-r', rate,
                 '-i', '-'
             ]
             if lossless:
@@ -1091,8 +1223,8 @@ def remove_watermark_from_video(
                 print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 Lossless)")
             else:
                 if codec == 'h264_nvenc':
-                    cmd.extend(['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-b:v', '5M'])
-                    print(f"[VideoProcess] FFmpeg Writer: {path} (h264_nvenc GPU Accelerated)")
+                    cmd.extend(['-c:v', 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0'])
+                    print(f"[VideoProcess] FFmpeg Writer: {path} (h264_nvenc GPU, constant-quality)")
                 else:
                     cmd.extend(['-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast'])
                     print(f"[VideoProcess] FFmpeg Writer: {path} (libx264 CPU, veryfast)")

@@ -24,12 +24,40 @@ class Settings(BaseSettings):
     voice_preset: str = Field("", validation_alias="VOICE_PRESET")
     llm_backend: str = Field("ollama", validation_alias="LLM_BACKEND")
     llm_model: str = Field("qwen2.5:14b", validation_alias="LLM_MODEL")
+    # Quantization for the vLLM serving backend (e.g. "awq", "fp8"). Empty = full precision /
+    # Ollama's own Q4. AWQ/FP8 roughly halves LLM VRAM (~9GB -> ~4.5GB) on the vLLM path.
+    llm_quantization: str = Field("", validation_alias="LLM_QUANTIZATION")
+    # ASR model served by whisperx-service. large-v3-turbo (~3GB, MIT) is the v2.0 default:
+    # ~50% faster than large-v3 at near-parity WER. Set WHISPER_MODEL=large-v3 to revert.
+    whisper_model: str = Field("large-v3-turbo", validation_alias="WHISPER_MODEL")
+    # Audio source separation: "demucs" (htdemucs_ft, default) or "bs_roformer" (SOTA vocal).
+    separation_engine: str = Field("demucs", validation_alias="SEPARATION_ENGINE")
+    # BS-Roformer model filename for the audio-separator package (only when engine=bs_roformer).
+    separation_model: str = Field(
+        "model_bs_roformer_ep_317_sdr_12.9755.ckpt", validation_alias="SEPARATION_MODEL"
+    )
+    # Demucs model when separation_engine=demucs. "htdemucs_ft" (default, 4-model bag, best vocal
+    # SDR) or "htdemucs" (single model, ~4x faster, slightly lower SDR). FAST_MODE selects htdemucs.
+    demucs_model: str = Field("htdemucs_ft", validation_alias="DEMUCS_MODEL")
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")
     enable_lipsync: bool = Field(False, validation_alias="ENABLE_LIPSYNC")
+    # Lip-sync engine: "latentsync" (quality, default) or "musetalk" (faster, single-pass).
+    lipsync_engine: str = Field("latentsync", validation_alias="LIPSYNC_ENGINE")
     enable_ocr: bool = Field(False, validation_alias="ENABLE_OCR")
     ocr_mode: str = Field("blur", validation_alias="OCR_MODE")
     enable_propainter: bool = Field(False, validation_alias="ENABLE_PROPAINTER")
+    # ProPainter HD/OOM mitigation (verify flag names against the installed ProPainter version):
+    # fp16 halves VRAM; resize_ratio<1.0 downscales before inpaint; smaller subvideo_length
+    # processes fewer frames per pass (temporal tiling) so HD fits on 8-16GB.
+    propainter_fp16: bool = Field(True, validation_alias="PROPAINTER_FP16")
+    propainter_resize_ratio: float = Field(1.0, validation_alias="PROPAINTER_RESIZE_RATIO")
+    propainter_subvideo_length: int = Field(80, validation_alias="PROPAINTER_SUBVIDEO_LENGTH")
+    # NEO-style CPU offload for the vLLM backend: offload cpu_offload_gb of LLM weights to CPU RAM
+    # (trades speed for VRAM so a bigger model fits a 16GB GPU). Wired to vLLM --cpu-offload-gb.
     enable_cpu_offload: bool = Field(False, validation_alias="ENABLE_CPU_OFFLOAD")
+    cpu_offload_gb: int = Field(4, validation_alias="CPU_OFFLOAD_GB")
+    # Reserved: elastic KV-cache / GPU sharing (kvcached). Not yet wired — needs the kvcached
+    # library + a compatible vLLM launch on the GPU box; setting it today logs a warning and no-ops.
     enable_kvcached: bool = Field(False, validation_alias="ENABLE_KVCACHED")
 
     # Paths
@@ -52,6 +80,10 @@ class Settings(BaseSettings):
     # Number of translation chunks sent to the LLM concurrently. Real speedup requires the
     # Ollama server to serve parallel requests (OLLAMA_NUM_PARALLEL>1).
     llm_concurrency: int = Field(4, validation_alias="LLM_CONCURRENCY")
+    # Ollama context window per request. Its default (2048) is too small for a 20-segment batch
+    # (long system prompt + JSON) — overflow truncates the prompt/output and collapses the fast
+    # batched path into slow per-item fallbacks. 8192 fits comfortably on 16-24 GB.
+    llm_num_ctx: int = Field(8192, validation_alias="LLM_NUM_CTX")
     # Gentle background-noise reduction on the separated bg track during the final mux.
     enable_bg_denoise: bool = Field(True, validation_alias="BG_DENOISE")
 

@@ -16,18 +16,41 @@ fi
 
 echo -e "\033[1;36mKhởi động các dịch vụ trong background...\033[0m"
 
-# Nạp file .env (nếu có) — auto-export mỗi biến, giữ nguyên value có dấu cách/ký tự đặc biệt
+# Nạp file .env (nếu có) — parse an toàn từng dòng KEY=VALUE. KHÔNG dot-source dưới `set -a`:
+# dot-source THỰC THI nội dung .env, nên một value chứa `$(...)`/backtick/`;` sẽ chạy như lệnh.
 if [ -f "$PROJECT_ROOT/.env" ]; then
-    set -a
-    . "$PROJECT_ROOT/.env"
-    set +a
+    while IFS= read -r line || [ -n "$line" ]; do
+        # bỏ qua dòng trống và comment
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        # chỉ nhận dòng dạng KEY=VALUE
+        case "$line" in
+            *=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        val="${line#*=}"
+        # trim khoảng trắng quanh key
+        key="$(printf '%s' "$key" | tr -d '[:space:]')"
+        [ -z "$key" ] && continue
+        # trim khoảng trắng đầu/cuối value
+        val="${val#"${val%%[![:space:]]*}"}"
+        val="${val%"${val##*[![:space:]]}"}"
+        # bỏ cặp dấu nháy kép/đơn bao ngoài value (nếu có)
+        case "$val" in
+            \"*\") val="${val#\"}"; val="${val%\"}" ;;
+            \'*\') val="${val#\'}"; val="${val%\'}" ;;
+        esac
+        export "$key=$val"
+    done < "$PROJECT_ROOT/.env"
 fi
 
 # Ghi đè các endpoint mặc định cho Local
 export WHISPERX_API="http://127.0.0.1:8001"
 export TTS_API="http://127.0.0.1:9880"
 export DEMUCS_API="local"
-export TTS_ENGINE="${TTS_ENGINE:-gpt_sovits}"
+export TTS_ENGINE="${TTS_ENGINE:-omnivoice}"
 export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 export LLM_BACKEND="${LLM_BACKEND:-ollama}"
 export LLM_MODEL="${LLM_MODEL:-qwen2.5:14b}"

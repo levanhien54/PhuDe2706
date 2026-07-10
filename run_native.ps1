@@ -61,16 +61,25 @@ if (-not $env:LLM_BACKEND) { $env:LLM_BACKEND = "ollama" }
 if (-not $env:LLM_MODEL) { $env:LLM_MODEL = "qwen2.5:14b" }
 if (-not $env:DATA_DIR) { $env:DATA_DIR = "$ProjectRoot\data" }
 if (-not $env:VRAM_PROFILE) { $env:VRAM_PROFILE = "24gb" }
-# TTS parallelism: OmniVoice loads this many model replicas; orchestrator dispatches
-# the same number of concurrent requests. STT/LLM are unloaded before phase-2 to free VRAM.
-if (-not $env:OMNIVOICE_REPLICAS) { $env:OMNIVOICE_REPLICAS = "2" }
-if (-not $env:TTS_CONCURRENCY) { $env:TTS_CONCURRENCY = "2" }
+# TTS parallelism: OmniVoice loads this many model replicas; orchestrator dispatches the same
+# number of concurrent requests. STT/LLM are unloaded before phase-2 so the whole GPU is free —
+# 24GB fits 4 replicas (~3GB each) for ~2x TTS throughput; 16GB is clamped to 2 below.
+if (-not $env:OMNIVOICE_REPLICAS) { $env:OMNIVOICE_REPLICAS = "4" }
+if (-not $env:TTS_CONCURRENCY) { $env:TTS_CONCURRENCY = "4" }
 # OmniVoice quality: num_step (cao hơn = phát âm tự nhiên hơn; 64 vẫn ~20x realtime) + CFG scale.
 if (-not $env:OMNIVOICE_NUM_STEP) { $env:OMNIVOICE_NUM_STEP = "64" }  # base model: higher = better quality
 if (-not $env:OMNIVOICE_GUIDANCE) { $env:OMNIVOICE_GUIDANCE = "2.0" }
 # Translation parallelism (client) + Ollama parallel slots (server, inherited by `ollama serve`).
 if (-not $env:LLM_CONCURRENCY) { $env:LLM_CONCURRENCY = "4" }
-if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "2" }
+if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "4" }
+# WhisperX transcribe batch (turbo ~3GB; a 24GB card handles 64 comfortably -> faster STT).
+if (-not $env:WHISPER_BATCH_SIZE) { $env:WHISPER_BATCH_SIZE = "64" }
+# Safety clamp: a 16GB card cannot hold 4 TTS replicas — keep replicas/concurrency at 2 there
+# (they must stay EQUAL: one replica per in-flight request).
+if ($env:VRAM_PROFILE -eq "16gb") {
+    if ([int]$env:OMNIVOICE_REPLICAS -gt 2) { $env:OMNIVOICE_REPLICAS = "2" }
+    if ([int]$env:TTS_CONCURRENCY -gt 2) { $env:TTS_CONCURRENCY = "2" }
+}
 
 # Use venv site-packages for imports (avoid shm.dll loader in venv Python)
 $env:PYTHONPATH = "$ProjectRoot\venv\Lib\site-packages;$ProjectRoot\GPT-SoVITS;$ProjectRoot\GPT-SoVITS\GPT_SoVITS"

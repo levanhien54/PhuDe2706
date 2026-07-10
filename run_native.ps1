@@ -61,6 +61,14 @@ if (-not $env:LLM_BACKEND) { $env:LLM_BACKEND = "ollama" }
 if (-not $env:LLM_MODEL) { $env:LLM_MODEL = "qwen2.5:14b" }
 if (-not $env:DATA_DIR) { $env:DATA_DIR = "$ProjectRoot\data" }
 if (-not $env:VRAM_PROFILE) { $env:VRAM_PROFILE = "24gb" }
+# FAST_MODE=1: ưu tiên TỐC ĐỘ — hạ OmniVoice num_step (32, TTS nhanh ~2x) và dùng Demucs 1-model
+# (htdemucs, tách nhạc nhanh ~4x). Mặc định (tắt) giữ CHẤT LƯỢNG cao. Giá trị đặt tường minh
+# (OMNIVOICE_NUM_STEP / DEMUCS_MODEL) vẫn được tôn trọng, không bị FAST_MODE ghi đè.
+if ($env:FAST_MODE -eq "1" -or $env:FAST_MODE -eq "true") {
+    if (-not $env:OMNIVOICE_NUM_STEP) { $env:OMNIVOICE_NUM_STEP = "32" }
+    if (-not $env:DEMUCS_MODEL) { $env:DEMUCS_MODEL = "htdemucs" }
+    Write-Host "  [FAST_MODE] num_step=32, demucs=htdemucs (ưu tiên tốc độ, chất lượng giảm nhẹ)" -ForegroundColor Yellow
+}
 # TTS parallelism: OmniVoice loads this many model replicas; orchestrator dispatches the same
 # number of concurrent requests. STT/LLM are unloaded before phase-2 so the whole GPU is free —
 # 24GB fits 4 replicas (~3GB each) for ~2x TTS throughput; 16GB is clamped to 2 below.

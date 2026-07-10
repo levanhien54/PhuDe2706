@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     separation_model: str = Field(
         "model_bs_roformer_ep_317_sdr_12.9755.ckpt", validation_alias="SEPARATION_MODEL"
     )
+    # Demucs model when separation_engine=demucs. "htdemucs_ft" (default, 4-model bag, best vocal
+    # SDR) or "htdemucs" (single model, ~4x faster, slightly lower SDR). FAST_MODE selects htdemucs.
+    demucs_model: str = Field("htdemucs_ft", validation_alias="DEMUCS_MODEL")
     vram_profile: str = Field("16gb", validation_alias="VRAM_PROFILE")
     enable_lipsync: bool = Field(False, validation_alias="ENABLE_LIPSYNC")
     # Lip-sync engine: "latentsync" (quality, default) or "musetalk" (faster, single-pass).

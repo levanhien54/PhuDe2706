@@ -21,10 +21,11 @@ class DemucsClient(BaseClient):
         if self.is_local:
             import asyncio
             import os
+            model = self.settings.demucs_model
             cmd = [
                 sys.executable, "-m", "demucs",
                 "--two-stems=vocals",
-                "-n", "htdemucs_ft",
+                "-n", model,
                 "-o", output_dir,
                 video_path
             ]
@@ -62,13 +63,13 @@ class DemucsClient(BaseClient):
                 raise ServiceUnavailableError(f"Local Demucs failed: {err_str} | {out_str}")
 
             base_name = os.path.splitext(os.path.basename(video_path))[0]
-            src_vocal = os.path.join(output_dir, "htdemucs_ft", base_name, "vocals.wav")
-            src_bg = os.path.join(output_dir, "htdemucs_ft", base_name, "no_vocals.wav")
+            src_vocal = os.path.join(output_dir, model, base_name, "vocals.wav")
+            src_bg = os.path.join(output_dir, model, base_name, "no_vocals.wav")
             dst_vocal = os.path.join(output_dir, "vocal.wav")
             dst_bg = os.path.join(output_dir, "bg.wav")
             shutil.move(src_vocal, dst_vocal)
             shutil.move(src_bg, dst_bg)
-            shutil.rmtree(os.path.join(output_dir, "htdemucs_ft"), ignore_errors=True)
+            shutil.rmtree(os.path.join(output_dir, model), ignore_errors=True)
 
             log.info("demucs_separate_done", vocal=dst_vocal)
             return {"vocal": dst_vocal, "background": dst_bg}

@@ -6,6 +6,9 @@ Dubbing — từ một máy Windows trống đến chỗ chạy được toàn b
 
 > Đối tượng: lập trình viên / người vận hành dựng máy để **chạy từ nguồn** và **kiểm thử**.
 > Nếu bạn chỉ cần cài bản đóng gói sẵn cho người dùng cuối, xem `HUONG-DAN/01-CAI-DAT.md`.
+>
+> ⚡ **Tối ưu hiệu năng** (các núm FAST_MODE / VRAM_PROFILE / cuDNN…) + **checklist kiểm chứng
+> trên GPU 24GB**: xem [TOI-UU-HIEU-NANG.md](TOI-UU-HIEU-NANG.md).
 
 ---
 

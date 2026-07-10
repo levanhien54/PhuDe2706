@@ -169,7 +169,7 @@ def test_bsroformer_times_out_and_kills(tmp_path, monkeypatch):
 def test_demucs_local_times_out_and_kills(tmp_path, monkeypatch):
     monkeypatch.setenv("GPU_SUBPROCESS_TIMEOUT_SEC", "0.05")
     proc = _HangProc()
-    settings = types.SimpleNamespace(demucs_api="local")
+    settings = types.SimpleNamespace(demucs_api="local", demucs_model="htdemucs_ft")
     client = demucs_client.DemucsClient(settings)
     with patch("asyncio.create_subprocess_exec", _fake_create_returning(proc)):
         with pytest.raises(ServiceUnavailableError):
